@@ -1,0 +1,6 @@
+venv
+.claude
+top-1m.csv
+tranco*
+
+*.log
