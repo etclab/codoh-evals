@@ -10,9 +10,7 @@ import csv
 import json
 import logging
 import os
-import subprocess
 import sys
-import time
 from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright
@@ -27,6 +25,7 @@ CHROMIUM_ARGS = [
     "--dns-prefetch-disable",
     "--disable-background-networking",
     "--disable-features=AsyncDns,DnsOverHttps",  # force system resolver
+    "--disable-features=HttpCache",
 ]
 
 # Parse strategy from command line
@@ -43,21 +42,6 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(message)s",
 )
 log = logging.getLogger(__name__)
-
-
-def flush_dns_cache():
-    """Flush the system DNS resolver cache."""
-    try:
-        result = subprocess.run(
-            ["resolvectl", "flush-caches"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if result.returncode == 0:
-            log.info("DNS cache flushed successfully")
-        else:
-            log.warning("DNS cache flush failed: %s", result.stderr.strip())
-    except Exception as e:
-        log.warning("DNS cache flush error: %s", e)
 
 
 def load_sites(path):
@@ -139,9 +123,6 @@ def run_benchmark():
             print(f"\nBenchmarking {url}")
 
             for run in range(1, RUNS_PER_SITE + 1):
-                flush_dns_cache()
-                time.sleep(0.5)
-
                 har_file = f"/tmp/har_{site}_{run}_{os.getpid()}.har"
 
                 # Restart browser each run to clear internal DNS cache

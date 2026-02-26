@@ -12,7 +12,7 @@ from playwright.sync_api import sync_playwright
 VALID_STRATEGIES = {"vanilla", "odoh"}
 
 SITES_FILE = "top-10.csv"
-LOG_FILE = "benchmark.log"
+LOG_FILE = "benchmark-cdp.log"
 RUNS_PER_SITE = 2
 
 CHROMIUM_ARGS = [
