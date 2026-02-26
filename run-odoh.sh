@@ -2,13 +2,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-DNSCRYPT_BIN="/home/apoudel01/downloads/project-codoh/dnscrypt-proxy/dnscrypt-proxy/dnscrypt-proxy"
-DNSCRYPT_CONFIG="/home/apoudel01/downloads/project-codoh/dnscrypt-proxy/dnscrypt-proxy/dnscrypt-proxy.toml"
+DNSCRYPT_DIR="/home/apoudel01/downloads/project-codoh/dnscrypt-proxy"
 DNSCRYPT_LISTEN="127.0.0.1:5300"
 DNSCRYPT_PID=""
-IFACE="enp113s0f0np0"
-ORIGINAL_DNS=""
-RESOLVED_CONF_DROP="/etc/systemd/resolved.conf.d/no-cache.conf"
+IFACE="ens4059f0np0" # while running on shs3, change if needed
 
 cleanup() {
     echo ""
@@ -21,24 +18,9 @@ cleanup() {
         wait "$DNSCRYPT_PID" 2>/dev/null || true
     fi
 
-    # Re-enable systemd-resolved cache
-    if [[ -f "$RESOLVED_CONF_DROP" ]]; then
-        echo "Re-enabling systemd-resolved cache..."
-        sudo rm -f "$RESOLVED_CONF_DROP"
-        sudo systemctl restart systemd-resolved
-    fi
+    # Revert DNS and re-enable resolved cache
+    "$SCRIPT_DIR/unset-dns.sh" "$IFACE"
 
-    # Restore original DNS
-    if [[ -n "$ORIGINAL_DNS" ]]; then
-        echo "Restoring DNS for $IFACE to: $ORIGINAL_DNS"
-        sudo resolvectl dns "$IFACE" $ORIGINAL_DNS
-    else
-        echo "Reverting $IFACE DNS to DHCP default..."
-        sudo resolvectl revert "$IFACE"
-    fi
-
-    echo "Current DNS status:"
-    resolvectl dns "$IFACE"
     echo "=== Done ==="
 }
 
@@ -48,22 +30,28 @@ trap cleanup EXIT
 echo "This script needs sudo to change DNS settings."
 sudo -v
 
-# --- Save current DNS ---
-ORIGINAL_DNS="$(resolvectl dns "$IFACE" 2>/dev/null | sed "s/^.*): //")"
-echo "Saved original DNS for $IFACE: $ORIGINAL_DNS"
+# --- Build and start dnscrypt-proxy ---
+echo "Building and starting dnscrypt-proxy (ODoH) on $DNSCRYPT_LISTEN..."
 
-# --- Disable systemd-resolved cache ---
-# Without this, resolved sits between Firefox and dnscrypt-proxy and caches
-# responses, hiding the real ODoH latency from the Performance API.
-echo "Disabling systemd-resolved cache..."
-sudo mkdir -p /etc/systemd/resolved.conf.d
-echo -e "[Resolve]\nCache=no" | sudo tee "$RESOLVED_CONF_DROP" > /dev/null
-sudo systemctl restart systemd-resolved
+# Kill any existing dnscrypt-proxy instances
+if pgrep -x dnscrypt-proxy >/dev/null 2>&1; then
+    echo "Stopping existing dnscrypt-proxy..."
+    pkill -x dnscrypt-proxy || true
+    sleep 2
+    if pgrep -x dnscrypt-proxy >/dev/null 2>&1; then
+        pkill -9 -x dnscrypt-proxy || true
+    fi
+fi
 
-# --- Start dnscrypt-proxy ---
-echo "Starting dnscrypt-proxy (ODoH) on $DNSCRYPT_LISTEN..."
-"$DNSCRYPT_BIN" -config "$DNSCRYPT_CONFIG" &
+# Build
+cd "$DNSCRYPT_DIR/dnscrypt-proxy"
+go build -mod vendor
+echo "Build complete."
+
+# Run in background (run.sh uses exec, so we launch directly)
+./dnscrypt-proxy -config dnscrypt-proxy.toml &
 DNSCRYPT_PID=$!
+cd "$SCRIPT_DIR"
 
 # Wait for it to be ready
 echo "Waiting for dnscrypt-proxy to start..."
@@ -80,13 +68,10 @@ for i in $(seq 1 30); do
     sleep 1
 done
 
-# --- Override system DNS ---
-echo "Setting DNS for $IFACE to $DNSCRYPT_LISTEN..."
-sudo resolvectl dns "$IFACE" "$DNSCRYPT_LISTEN"
-resolvectl dns "$IFACE"
+# --- Override system DNS (also disables resolved cache) ---
+"$SCRIPT_DIR/set-dns.sh" "$IFACE" "$DNSCRYPT_LISTEN"
 
-# Verify — flush first so the dig actually goes through ODoH
-sudo resolvectl flush-caches
+# Verify DNS resolution through ODoH
 echo "Verifying DNS resolution via ODoH..."
 if dig google.com +short +timeout=10 >/dev/null 2>&1; then
     echo "DNS resolution OK."
@@ -98,7 +83,7 @@ fi
 echo ""
 echo "=== Running ODoH benchmark ==="
 cd "$SCRIPT_DIR"
-python benchmark.py odoh
+python benchmark-har.py odoh
 
 echo ""
-echo "Benchmark complete. Results in results_odoh.csv"
+echo "Benchmark complete. Results in results_har_odoh.csv"
