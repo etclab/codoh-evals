@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import sys
+from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright
@@ -55,22 +56,50 @@ def load_sites(path):
     return sites
 
 
+def _merge_intervals_duration(intervals):
+    """Merge overlapping (start, end) intervals and return total duration."""
+    if not intervals:
+        return 0.0
+    sorted_intervals = sorted(intervals)
+    merged_duration = 0.0
+    current_start, current_end = sorted_intervals[0]
+    for start, end in sorted_intervals[1:]:
+        if start <= current_end:
+            current_end = max(current_end, end)
+        else:
+            merged_duration += current_end - current_start
+            current_start, current_end = start, end
+    merged_duration += current_end - current_start
+    return merged_duration
+
+
 def parse_har(har_file, nav_host):
     """Parse a HAR file and extract DNS timing metrics.
 
     Returns a dict with:
       - main_dns: DNS time (ms) for the main document request
       - total_dns_sum: sum of all positive DNS lookup times (ms)
+      - wall_clock_dns: wall-clock DNS time after merging parallel intervals (ms)
       - domain_dns: dict mapping hostname -> dns_ms (first lookup only)
     """
     domain_dns = {}
     total_dns_sum = 0.0
     main_dns = 0.0
+    dns_intervals = []  # list of (start_ms, end_ms) for wall-clock calculation
 
     with open(har_file, "r", encoding="utf-8") as f:
         har_data = json.load(f)
 
-        for i, entry in enumerate(har_data["log"]["entries"]):
+        entries = har_data["log"]["entries"]
+
+        # Use the first entry's startedDateTime as the baseline
+        # https://w3c.github.io/web-performance/specs/HAR/Overview.html#sec-object-types-timings
+        t0 = None
+        if entries:
+            t0 = datetime.fromisoformat(entries[0]["startedDateTime"])
+        print(f"  Parsed HAR with {len(entries)} entries, baseline time: {t0}")
+
+        for i, entry in enumerate(entries):
             req_url = entry["request"]["url"]
             timings = entry.get("timings", {})
 
@@ -84,6 +113,17 @@ def parse_har(har_file, nav_host):
 
             if dns_ms > 0:
                 total_dns_sum += dns_ms
+
+                # Reconstruct wall-clock DNS interval
+                if t0:
+                    entry_start = datetime.fromisoformat(entry["startedDateTime"])
+                    offset_ms = (entry_start - t0) / timedelta(milliseconds=1)
+                    blocked_ms = max(timings.get("blocked", 0), 0)
+                    dns_start = offset_ms + blocked_ms
+                    dns_end = dns_start + dns_ms
+                    print(f"    Entry {i}: {host} dns={dns_ms:.1f}ms "
+                          f"interval=({dns_start:.1f}ms, {dns_end:.1f}ms), start={entry_start}")
+                    dns_intervals.append((dns_start, dns_end))
 
                 # Track first DNS lookup per domain
                 if host and host not in domain_dns:
@@ -99,9 +139,13 @@ def parse_har(har_file, nav_host):
             if main_dns == 0.0 and i == 0 and dns_ms > 0:
                 main_dns = dns_ms
 
+    # Compute wall-clock DNS time by merging overlapping intervals
+    wall_clock_dns = _merge_intervals_duration(dns_intervals)
+
     return {
         "main_dns": main_dns,
         "total_dns_sum": total_dns_sum,
+        "wall_clock_dns": wall_clock_dns,
         "domain_dns": domain_dns,
     }
 
@@ -155,6 +199,7 @@ def run_benchmark():
                 har_metrics = parse_har(har_file, nav_host)
                 main_dns = har_metrics["main_dns"]
                 total_dns = har_metrics["total_dns_sum"]
+                wall_clock_dns = har_metrics["wall_clock_dns"]
                 domain_dns = har_metrics["domain_dns"]
 
                 # Log per-domain breakdown
@@ -171,22 +216,24 @@ def run_benchmark():
                     "strategy": STRATEGY,
                     "main_dns_ms": main_dns,
                     "total_dns_sum_ms": total_dns,
+                    "wall_clock_dns_ms": wall_clock_dns,
                     "page_load_ms": page_load,
                     "unique_domains_resolved": len(domain_dns),
                 }
                 results.append(row)
 
-                log.info("  Run %d: main_dns=%.1fms total_dns=%.1fms load=%.1fms domains=%d",
-                         run, main_dns, total_dns, page_load, len(domain_dns))
+                log.info("  Run %d: main_dns=%.1fms total_dns=%.1fms wall_clock_dns=%.1fms load=%.1fms domains=%d",
+                         run, main_dns, total_dns, wall_clock_dns, page_load, len(domain_dns))
                 print(f"  Run {run}: main_dns={main_dns:.1f}ms "
                       f"total_dns={total_dns:.1f}ms "
+                      f"wall_clock_dns={wall_clock_dns:.1f}ms "
                       f"load={page_load:.1f}ms "
                       f"domains_resolved={len(domain_dns)}")
 
     # Write results
     fieldnames = [
         "site", "run", "strategy",
-        "main_dns_ms", "total_dns_sum_ms",
+        "main_dns_ms", "total_dns_sum_ms", "wall_clock_dns_ms",
         "page_load_ms", "unique_domains_resolved",
     ]
     with open(OUTPUT_FILE, "w", newline="") as f:
