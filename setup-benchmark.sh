@@ -33,9 +33,10 @@ fi
 echo "Installing playwright..."
 "$VENV_DIR/bin/pip" install --quiet playwright
 
-# Step 3: Install Chromium browser
+# Step 3: Install Chromium browser and dependencies
 echo "Installing Chromium browser for playwright..."
 "$VENV_DIR/bin/playwright" install chromium
+"$VENV_DIR/bin/playwright" install-deps chromium
 
 echo ""
 echo "=== Setup complete ==="
