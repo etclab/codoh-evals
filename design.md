@@ -35,9 +35,12 @@
 - Same measurements as chunk 1
 - Run: `python benchmark.py doh`
 
-### Chunk 3: Playwright with ODoH via local DNS proxy
-- Swap the proxy upstream to ODoH
-- Same measurements
+### Chunk 3: Playwright with ODoH via dnscrypt-proxy
+- Stop the default dnscrypt-proxy service and restart with `dnscrypt-proxy-odoh.toml`
+- Config uses `odoh-cloudflare` server with ODoH relays (anonymized routing)
+- dnscrypt-proxy listens on `127.0.2.1:53`; Firefox uses system DNS (no TRR prefs needed)
+- Internal cache disabled (`cache = false`) to measure real upstream ODoH latency
+- Run: `python benchmark.py odoh`
 
 ### Chunk 4: Playwright with CoDoH via local DNS proxy
 - Swap the proxy upstream to CoDoH

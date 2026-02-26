@@ -8,11 +8,11 @@ import sys
 import time
 from playwright.sync_api import sync_playwright
 
-VALID_STRATEGIES = {"vanilla", "doh"}
+VALID_STRATEGIES = {"vanilla", "doh", "odoh"}
 
 SITES_FILE = "top-10.csv"
 LOG_FILE = "benchmark.log"
-RUNS_PER_SITE = 2
+RUNS_PER_SITE = 1
 
 # Parse strategy from command line
 STRATEGY = sys.argv[1] if len(sys.argv) > 1 else "vanilla"
@@ -67,30 +67,47 @@ def measure_page(page, url):
 
     timings = page.evaluate("""() => {
         const [nav] = performance.getEntriesByType('navigation');
-        const mainDns = nav.domainLookupEnd - nav.domainLookupStart;
         const pageLoad = nav.loadEventEnd - nav.startTime;
 
-        const resources = performance.getEntriesByType('resource');
+        // Collect all entries (navigation + resources) to find the full
+        // DNS time span: first lookup start → last lookup end.
+        const allEntries = [nav, ...performance.getEntriesByType('resource')];
+
+        let firstDnsStart = Infinity;
+        let lastDnsEnd = 0;
         const domainDns = {};
-        for (const r of resources) {
-            try {
-                const host = new URL(r.name).hostname;
-                const dns = r.domainLookupEnd - r.domainLookupStart;
-                if (!domainDns[host]) {
-                    domainDns[host] = dns;
-                }
-            } catch(e) {}
+
+        for (const entry of allEntries) {
+            const start = entry.domainLookupStart;
+            const end   = entry.domainLookupEnd;
+            if (start > 0 && end > 0 && end > start) {
+                if (start < firstDnsStart) firstDnsStart = start;
+                if (end   > lastDnsEnd)    lastDnsEnd = end;
+            }
+            // Per-domain breakdown (resources only)
+            if (entry !== nav) {
+                try {
+                    const host = new URL(entry.name).hostname;
+                    const dns = end - start;
+                    if (!domainDns[host]) domainDns[host] = dns;
+                } catch(e) {}
+            }
         }
 
+        const mainDns = nav.domainLookupEnd - nav.domainLookupStart;
+        const dnsSpan = (firstDnsStart < Infinity) ? lastDnsEnd - firstDnsStart : 0;
         const uniqueDomains = Object.keys(domainDns).length;
-        const totalDns = Object.values(domainDns).reduce((a, b) => a + b, 0);
 
         return {
             mainDns: mainDns,
+            dnsSpan: dnsSpan,
             pageLoad: pageLoad,
             uniqueDomains: uniqueDomains,
-            totalDns: totalDns + mainDns,
+            firstDnsStart: firstDnsStart < Infinity ? firstDnsStart : 0,
+            lastDnsEnd: lastDnsEnd,
             domainDetails: domainDns,
+            nav_array: nav.toJSON(),
+            resource_array: performance.getEntriesByType('resource').map(e => e.toJSON()),
         };
     }""")
 
@@ -113,14 +130,33 @@ def run_benchmark():
     with sync_playwright() as p:
         # Firefox reports accurate DNS timing via the Performance API.
         # Chromium's headless shell reports 0ms for DNS lookups.
+        # Disable Firefox's internal DNS cache so every navigation does a
+        # fresh lookup.  This is critical for ODoH/vanilla where DNS goes
+        # through the system resolver — without it, Firefox serves cached
+        # IPs and the Performance API reports ~0 ms.
+        dns_no_cache_prefs = {
+            "network.dnsCacheEntries": 0,
+            "network.dnsCacheExpiration": 0,
+        }
+
         launch_kwargs = {"headless": True}
         if STRATEGY == "doh":
             launch_kwargs["firefox_user_prefs"] = {
+                **dns_no_cache_prefs,
                 "network.trr.mode": 3,                       # TRR only (no fallback to system DNS)
                 "network.trr.uri": "https://1.1.1.1/dns-query",  # Cloudflare DoH
                 "network.trr.bootstrapAddr": "1.1.1.1",      # Avoid chicken-and-egg DNS lookup
             }
             log.info("DoH enabled via Firefox TRR (mode=3, resolver=1.1.1.1)")
+        elif STRATEGY == "odoh":
+            launch_kwargs["firefox_user_prefs"] = {
+                **dns_no_cache_prefs,
+            }
+            log.info("ODoH enabled via system DNS -> dnscrypt-proxy on 127.0.0.1:5300")
+        else:
+            launch_kwargs["firefox_user_prefs"] = {
+                **dns_no_cache_prefs,
+            }
         browser = p.firefox.launch(**launch_kwargs)
 
         for site in sites:
@@ -144,14 +180,16 @@ def run_benchmark():
                         "run": run,
                         "strategy": STRATEGY,
                         "main_dns_ms": timings["mainDns"],
+                        "dns_span_ms": timings["dnsSpan"],
                         "page_load_ms": timings["pageLoad"],
                         "unique_domains": timings["uniqueDomains"],
-                        "total_dns_ms": timings["totalDns"],
                     }
                     results.append(row)
-                    log.info("  Run %d: dns=%.1fms load=%.1fms domains=%d",
-                             run, timings["mainDns"], timings["pageLoad"], timings["uniqueDomains"])
-                    print(f"  Run {run}: dns={timings['mainDns']:.1f}ms load={timings['pageLoad']:.1f}ms domains={timings['uniqueDomains']}")
+                    log.info("  Run %d: main_dns=%.1fms dns_span=%.1fms load=%.1fms domains=%d",
+                             run, timings["mainDns"], timings["dnsSpan"], timings["pageLoad"], timings["uniqueDomains"])
+                    print(f"  Run {run}: main_dns={timings['mainDns']:.1f}ms dns_span={timings['dnsSpan']:.1f}ms load={timings['pageLoad']:.1f}ms domains={timings['uniqueDomains']}")
+                    print(f"  nav_array: {timings['nav_array']}")
+                    print(f"  resource_array: {timings['resource_array']}")
                 else:
                     log.warning("  Run %d: FAILED", run)
 
@@ -160,7 +198,7 @@ def run_benchmark():
         browser.close()
 
     # Write results
-    fieldnames = ["site", "run", "strategy", "main_dns_ms", "page_load_ms", "unique_domains", "total_dns_ms"]
+    fieldnames = ["site", "run", "strategy", "main_dns_ms", "dns_span_ms", "page_load_ms", "unique_domains"]
     with open(OUTPUT_FILE, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
