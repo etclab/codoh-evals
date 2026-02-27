@@ -3,10 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DNSCRYPT_DIR="../dnscrypt-proxy"
-DNSCRYPT_LISTEN="127.0.0.1:5300"
 DNSCRYPT_PID=""
-IFACE="ens4059f0np0" # while running on shs3, change if needed
-# IFACE="enp193s0f0np0" # while running on shs4, change if needed
 
 cleanup() {
     echo ""
@@ -19,20 +16,17 @@ cleanup() {
         wait "$DNSCRYPT_PID" 2>/dev/null || true
     fi
 
-    # Revert DNS and re-enable resolved cache
-    "$SCRIPT_DIR/unset-dns.sh" "$IFACE"
-
     echo "=== Done ==="
 }
 
 trap cleanup EXIT
 
 # --- Prompt for sudo upfront ---
-echo "This script needs sudo to change DNS settings."
+echo "This script needs sudo to bind DNS to port 53."
 sudo -v
 
 # --- Build and start dnscrypt-proxy ---
-echo "Building and starting dnscrypt-proxy (ODoH) on $DNSCRYPT_LISTEN..."
+echo "Building and starting dnscrypt-proxy (ODoH)..."
 
 # Kill any existing dnscrypt-proxy instances
 if pgrep -x dnscrypt-proxy >/dev/null 2>&1; then
@@ -50,14 +44,14 @@ go build -mod vendor
 echo "Build complete."
 
 # Run in background (run.sh uses exec, so we launch directly)
-./dnscrypt-proxy -config dnscrypt-proxy.toml &
+sudo ./dnscrypt-proxy -config dnscrypt-proxy.toml &
 DNSCRYPT_PID=$!
 cd "$SCRIPT_DIR"
 
 # Wait for it to be ready
 echo "Waiting for dnscrypt-proxy to start..."
 for i in $(seq 1 30); do
-    if dig @127.0.0.1 -p 5300 google.com +short +timeout=2 >/dev/null 2>&1; then
+    if dig google.com +short +timeout=2 >/dev/null 2>&1; then
         echo "dnscrypt-proxy is ready."
         break
     fi
@@ -68,9 +62,6 @@ for i in $(seq 1 30); do
     fi
     sleep 1
 done
-
-# --- Override system DNS (also disables resolved cache) ---
-"$SCRIPT_DIR/set-dns.sh" "$IFACE" "$DNSCRYPT_LISTEN"
 
 # Verify DNS resolution through ODoH
 echo "Verifying DNS resolution via ODoH..."
