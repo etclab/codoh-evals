@@ -4,12 +4,22 @@
 Unlike the JS Performance API, HAR capture is not subject to the
 Timing-Allow-Origin (TAO) restriction, so cross-origin DNS/TCP/TLS
 timings are reported accurately.
+
+Usage:
+    python benchmark-har.py <strategy> [options]
+
+Examples:
+    python benchmark-har.py vanilla
+    python benchmark-har.py odoh --sites top-100.csv --runs 10
+    python benchmark-har.py odoh --runs 5 --randomize
 """
 
+import argparse
 import csv
 import json
 import logging
 import os
+import random
 import sys
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
@@ -18,10 +28,6 @@ from playwright.sync_api import sync_playwright
 
 VALID_STRATEGIES = {"vanilla", "odoh"}
 
-SITES_FILE = "top-10.csv"
-LOG_FILE = "benchmark-har.log"
-RUNS_PER_SITE = 2
-
 CHROMIUM_ARGS = [
     "--dns-prefetch-disable",
     "--disable-background-networking",
@@ -29,16 +35,46 @@ CHROMIUM_ARGS = [
     "--disable-features=HttpCache",
 ]
 
-# Parse strategy from command line
-STRATEGY = sys.argv[1] if len(sys.argv) > 1 else "vanilla"
-if STRATEGY not in VALID_STRATEGIES:
-    print(f"Unknown strategy '{STRATEGY}'. Valid: {', '.join(sorted(VALID_STRATEGIES))}")
-    sys.exit(1)
-OUTPUT_FILE = f"results_har_{STRATEGY}.csv"
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Page-load benchmark with HAR-based DNS timing.",
+    )
+    parser.add_argument(
+        "strategy",
+        choices=sorted(VALID_STRATEGIES),
+        help="DNS resolution strategy to benchmark",
+    )
+    parser.add_argument(
+        "--sites", default="top-10.csv",
+        help="CSV file with (rank, domain) rows (default: top-10.csv)",
+    )
+    parser.add_argument(
+        "--log", default="benchmark-har.log",
+        help="Log file path (default: benchmark-har.log)",
+    )
+    parser.add_argument(
+        "--runs", type=int, default=2,
+        help="Number of runs per site (default: 2)",
+    )
+    parser.add_argument(
+        "--randomize", action="store_true",
+        help="Shuffle site order each cycle to avoid time-of-day bias. "
+             "Without this flag, all runs for a site are done consecutively.",
+    )
+    parser.add_argument(
+        "--output",
+        help="Output CSV path (default: results_har_<strategy>.csv)",
+    )
+    return parser.parse_args()
+
+
+args = parse_args()
+OUTPUT_FILE = args.output or f"results_har_{args.strategy}.csv"
 
 # Set up file logger
 logging.basicConfig(
-    filename=LOG_FILE,
+    filename=args.log,
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
 )
@@ -150,85 +186,116 @@ def parse_har(har_file, nav_host):
     }
 
 
+def benchmark_site(p, site, run, strategy):
+    """Benchmark a single site and return a result dict, or None on failure."""
+    url = f"https://{site}"
+    nav_host = urlparse(url).hostname
+    har_file = f"/tmp/har_{site}_{run}_{os.getpid()}.har"
+
+    # Restart browser each run to clear internal DNS cache
+    browser = p.chromium.launch(headless=True, args=CHROMIUM_ARGS)
+    context = browser.new_context(record_har_path=har_file)
+    page = context.new_page()
+
+    try:
+        page.goto(url, wait_until="load", timeout=30000)
+        page.wait_for_timeout(2000)  # let lazy JS fire subresource fetches
+
+        page_load = page.evaluate("""() => {
+            const [nav] = performance.getEntriesByType('navigation');
+            return nav ? nav.loadEventEnd - nav.startTime : 0;
+        }""")
+    except Exception as e:
+        log.error("Failed to load %s: %s", url, e)
+        print(f"  Run {run}: FAILED ({e})")
+        context.close()
+        browser.close()
+        if os.path.exists(har_file):
+            os.remove(har_file)
+        return None
+
+    # Closing the context flushes network data to the HAR file
+    context.close()
+    browser.close()
+
+    # Parse HAR for DNS timings
+    har_metrics = parse_har(har_file, nav_host)
+    main_dns = har_metrics["main_dns"]
+    total_dns = har_metrics["total_dns_sum"]
+    wall_clock_dns = har_metrics["wall_clock_dns"]
+    domain_dns = har_metrics["domain_dns"]
+
+    # Log per-domain breakdown
+    for host, dns_ms in sorted(domain_dns.items()):
+        print(f"    DNS {host}: {dns_ms:.1f}ms")
+
+    # Clean up temp file
+    if os.path.exists(har_file):
+        os.remove(har_file)
+
+    row = {
+        "site": site,
+        "run": run,
+        "strategy": strategy,
+        "main_dns_ms": main_dns,
+        "total_dns_sum_ms": total_dns,
+        "wall_clock_dns_ms": wall_clock_dns,
+        "page_load_ms": page_load,
+        "unique_domains_resolved": len(domain_dns),
+    }
+
+    log.info("  Run %d: main_dns=%.1fms total_dns=%.1fms wall_clock_dns=%.1fms load=%.1fms domains=%d",
+             run, main_dns, total_dns, wall_clock_dns, page_load, len(domain_dns))
+    print(f"  Run {run}: main_dns={main_dns:.1f}ms "
+          f"total_dns={total_dns:.1f}ms "
+          f"wall_clock_dns={wall_clock_dns:.1f}ms "
+          f"load={page_load:.1f}ms "
+          f"domains_resolved={len(domain_dns)}")
+
+    return row
+
+
 def run_benchmark():
-    sites = load_sites(SITES_FILE)
+    sites = load_sites(args.sites)
+    strategy = args.strategy
+    runs = args.runs
+    randomize = args.randomize
+
     log.info("=" * 60)
-    log.info("HAR Benchmark started: strategy=%s, sites=%d, runs=%d",
-             STRATEGY, len(sites), RUNS_PER_SITE)
-    print(f"Loaded {len(sites)} sites  [strategy={STRATEGY}]")
+    log.info("HAR Benchmark started: strategy=%s, sites=%d, runs=%d, randomize=%s",
+             strategy, len(sites), runs, randomize)
+    print(f"Loaded {len(sites)} sites  [strategy={strategy}, runs={runs}, "
+          f"randomize={randomize}]")
 
     results = []
 
     with sync_playwright() as p:
-        for site in sites:
-            url = f"https://{site}"
-            nav_host = urlparse(url).hostname
-            log.info("Starting site: %s", url)
-            print(f"\nBenchmarking {url}")
+        if randomize:
+            # Cycle-based: each cycle shuffles the site list independently
+            # to eliminate time-of-day bias across sites.
+            for cycle in range(1, runs + 1):
+                order = list(range(len(sites)))
+                random.shuffle(order)
+                ordered_sites = [sites[i] for i in order]
+                log.info("Cycle %d: order=%s", cycle, [s for s in ordered_sites])
+                print(f"\n--- Cycle {cycle}/{runs} "
+                      f"(order: {', '.join(ordered_sites)}) ---")
 
-            for run in range(1, RUNS_PER_SITE + 1):
-                har_file = f"/tmp/har_{site}_{run}_{os.getpid()}.har"
+                for site in ordered_sites:
+                    print(f"\nBenchmarking https://{site}")
+                    row = benchmark_site(p, site, cycle, strategy)
+                    if row:
+                        results.append(row)
+        else:
+            # Default: all runs for a site consecutively, then next site.
+            for site in sites:
+                log.info("Starting site: https://%s", site)
+                print(f"\nBenchmarking https://{site}")
 
-                # Restart browser each run to clear internal DNS cache
-                browser = p.chromium.launch(headless=True, args=CHROMIUM_ARGS)
-                context = browser.new_context(record_har_path=har_file)
-                page = context.new_page()
-
-                try:
-                    page.goto(url, wait_until="load", timeout=30000)
-                    page.wait_for_timeout(2000)  # let lazy JS fire subresource fetches
-
-                    page_load = page.evaluate("""() => {
-                        const [nav] = performance.getEntriesByType('navigation');
-                        return nav ? nav.loadEventEnd - nav.startTime : 0;
-                    }""")
-                except Exception as e:
-                    log.error("Failed to load %s: %s", url, e)
-                    print(f"  Run {run}: FAILED ({e})")
-                    context.close()
-                    browser.close()
-                    if os.path.exists(har_file):
-                        os.remove(har_file)
-                    continue
-
-                # Closing the context flushes network data to the HAR file
-                context.close()
-                browser.close()
-
-                # Parse HAR for DNS timings
-                har_metrics = parse_har(har_file, nav_host)
-                main_dns = har_metrics["main_dns"]
-                total_dns = har_metrics["total_dns_sum"]
-                wall_clock_dns = har_metrics["wall_clock_dns"]
-                domain_dns = har_metrics["domain_dns"]
-
-                # Log per-domain breakdown
-                for host, dns_ms in sorted(domain_dns.items()):
-                    print(f"    DNS {host}: {dns_ms:.1f}ms")
-
-                # Clean up temp file
-                if os.path.exists(har_file):
-                    os.remove(har_file)
-
-                row = {
-                    "site": site,
-                    "run": run,
-                    "strategy": STRATEGY,
-                    "main_dns_ms": main_dns,
-                    "total_dns_sum_ms": total_dns,
-                    "wall_clock_dns_ms": wall_clock_dns,
-                    "page_load_ms": page_load,
-                    "unique_domains_resolved": len(domain_dns),
-                }
-                results.append(row)
-
-                log.info("  Run %d: main_dns=%.1fms total_dns=%.1fms wall_clock_dns=%.1fms load=%.1fms domains=%d",
-                         run, main_dns, total_dns, wall_clock_dns, page_load, len(domain_dns))
-                print(f"  Run {run}: main_dns={main_dns:.1f}ms "
-                      f"total_dns={total_dns:.1f}ms "
-                      f"wall_clock_dns={wall_clock_dns:.1f}ms "
-                      f"load={page_load:.1f}ms "
-                      f"domains_resolved={len(domain_dns)}")
+                for run in range(1, runs + 1):
+                    row = benchmark_site(p, site, run, strategy)
+                    if row:
+                        results.append(row)
 
     # Write results
     fieldnames = [
