@@ -1,3 +1,22 @@
+## Benchmarks
+- Ensure [`dnscrypt-proxy`](https://github.com/etclab/dnscrypt-proxy/) is installed alongside this repo
+- Run DoH with: `SITES=name.csv RUNS=2 ./run-doh.sh`
+    - Outputs: `results_har_doh.csv`
+- Run ODoH with: `SITES=name.csv RUNS=2 ./run-doh.sh`
+    - Outputs: `results_har_odoh.csv`
+- Default values for `SITES=sampled-100-of-2000-resolvable.csv` and `RUNS=1`
+- Once you have the results run (inside venv): 
+    - For DoH: `python3 plot_cdf.py results_har_doh.csv -o cdf_doh.dat`
+        - Outputs: `cdf_doh.dat` and `cdf_doh_dns_ratio.dat`
+    - For ODoH: `python3 plot_cdf.py results_har_odoh.csv -o cdf_odoh.dat`
+        - Outputs: `cdf_odoh.dat` and `cdf_odoh_dns_ratio.dat`
+- Plot using gnuplot:
+    - Compares dns vs page load time betn DoH & ODoH: `gnuplot plot_cdf.gnuplot`
+        - Outputs: `cdf_odoh_doh.pdf`
+    - Compare (dns / page load) time ratio betn DoH & ODoH: `gnuplot plot_dns_ratio.gnuplot`
+        - Outputs: `cdf_dns_ratio.pdf`
+    
+
 ## Steps
 - download [`dnscrypt-proxy`](https://github.com/etclab/dnscrypt-proxy/) and start using: `./run.sh`
 - use `set-dns.sh` to setup system dns to use `dnscrypt-proxy`

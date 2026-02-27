@@ -29,7 +29,7 @@ from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright
 
-VALID_STRATEGIES = {"vanilla", "odoh"}
+VALID_STRATEGIES = {"vanilla", "odoh", "doh"}
 
 CHROMIUM_ARGS = [
     "--dns-prefetch-disable",
@@ -53,8 +53,8 @@ def parse_args():
         help="CSV file with (rank, domain) rows (default: top-10.csv)",
     )
     parser.add_argument(
-        "--log", default="benchmark-har.log",
-        help="Log file path (default: benchmark-har.log)",
+        "--log",
+        help="Log file path (default: benchmark-har-<strategy>.log)",
     )
     parser.add_argument(
         "--runs", type=int, default=2,
@@ -74,10 +74,11 @@ def parse_args():
 
 args = parse_args()
 OUTPUT_FILE = args.output or f"results_har_{args.strategy}.csv"
+LOG_FILE = args.log or f"benchmark-har-{args.strategy}.log"
 
 # Set up file logger
 logging.basicConfig(
-    filename=args.log,
+    filename=LOG_FILE,
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
 )
