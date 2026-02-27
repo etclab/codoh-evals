@@ -83,7 +83,7 @@ fi
 echo ""
 echo "=== Running ODoH benchmark ==="
 cd "$SCRIPT_DIR"
-python benchmark-har.py odoh --randomize
+python benchmark-har.py odoh --randomize --sites=sampled-sites.csv --runs=1
 
 echo ""
 echo "Benchmark complete. Results in results_har_odoh.csv"
