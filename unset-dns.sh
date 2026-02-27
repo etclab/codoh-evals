@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-IFACE="${1:-enp113s0f0np0}"
+IFACE="${1}"
 RESOLVED_CONF_DROP="/etc/systemd/resolved.conf.d/no-cache.conf"
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then

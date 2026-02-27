@@ -3,8 +3,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-IFACE="${1:-enp113s0f0np0}"
-DNSCRYPT_LISTEN="${2:-127.0.0.1:5300}"
+IFACE="${1}"
+DNSCRYPT_LISTEN="127.0.0.1:53"
 
 usage() {
     cat <<'EOF'

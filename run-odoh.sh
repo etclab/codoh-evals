@@ -2,14 +2,26 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+COREDNS_DIR="../coredns"
+COREDNS_PID=""
 DNSCRYPT_DIR="../dnscrypt-proxy"
 DNSCRYPT_PID=""
 SITES="${SITES:-sampled-100-of-2000-resolvable.csv}"
 RUNS="${RUNS:-1}"
 
+INTERFACE=$(ip -o route show default | awk '{print $5; exit}')
+echo "$INTERFACE"
+
 cleanup() {
     echo ""
     echo "=== Cleaning up ==="
+
+    # Stop coredns
+    if [[ -n "$COREDNS_PID" ]] && kill -0 "$COREDNS_PID" 2>/dev/null; then
+        echo "Stopping coredns (PID $COREDNS_PID)..."
+        kill "$COREDNS_PID" 2>/dev/null || true
+        wait "$COREDNS_PID" 2>/dev/null || true
+    fi
 
     # Stop dnscrypt-proxy
     if [[ -n "$DNSCRYPT_PID" ]] && kill -0 "$DNSCRYPT_PID" 2>/dev/null; then
@@ -17,6 +29,10 @@ cleanup() {
         kill "$DNSCRYPT_PID" 2>/dev/null || true
         wait "$DNSCRYPT_PID" 2>/dev/null || true
     fi
+
+    # Unset DNS
+
+    ./unset-dns.sh "$INTERFACE"
 
     echo "=== Done ==="
 }
@@ -26,6 +42,22 @@ trap cleanup EXIT
 # --- Prompt for sudo upfront ---
 echo "This script needs sudo to bind DNS to port 53."
 sudo -v
+
+# Disable Cache
+
+./set-dns.sh "$INTERFACE"
+
+# CoreDNS Setup
+
+cd "$COREDNS_DIR" # Must be on 'odoh' branch
+
+# Build
+make
+
+# Run in background (run.sh uses exec, so we launch directly)
+./coredns -conf=Corefile.local & COREDNS_PID=$!
+
+# DNSCrypt Proxy Setup
 
 # --- Build and start dnscrypt-proxy ---
 echo "Building and starting dnscrypt-proxy (ODoH)..."
@@ -46,8 +78,7 @@ go build -mod vendor
 echo "Build complete."
 
 # Run in background (run.sh uses exec, so we launch directly)
-sudo ./dnscrypt-proxy -config dnscrypt-proxy.toml &
-DNSCRYPT_PID=$!
+sudo ./dnscrypt-proxy -config dnscrypt-proxy-local-odoh.toml & DNSCRYPT_PID=$!
 cd "$SCRIPT_DIR"
 
 # Wait for it to be ready
