@@ -12,6 +12,19 @@ RUNS="${RUNS:-1}"
 INTERFACE=$(ip -o route show default | awk '{print $5; exit}')
 echo "$INTERFACE"
 
+# --- Create timestamped run directory ---
+TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
+RUN_DIR="$SCRIPT_DIR/runs/doh-$TIMESTAMP"
+mkdir -p "$RUN_DIR"
+RESULTS_CSV="$RUN_DIR/results_har_doh.csv"
+BENCH_LOG="$RUN_DIR/benchmark-har-doh.log"
+SCRIPT_LOG="$RUN_DIR/run-doh.log"
+
+# Tee all script output to the run directory
+exec > >(tee -a "$SCRIPT_LOG") 2>&1
+
+echo "Run directory: $RUN_DIR"
+
 cleanup() {
     echo ""
     echo "=== Cleaning up ==="
@@ -120,7 +133,9 @@ playwright install
 playwright install-deps 
 
 python benchmark-har.py doh --randomize --runs="$RUNS" \
-    --sites="$SITES"
+    --sites="$SITES" \
+    --output="$RESULTS_CSV" \
+    --log="$BENCH_LOG"
 
 echo ""
-echo "Benchmark complete. Results in results_har_doh.csv"
+echo "Benchmark complete. Results in $RUN_DIR"
