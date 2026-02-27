@@ -133,7 +133,7 @@ def parse_har(har_file, nav_host):
         t0 = None
         if entries:
             t0 = datetime.fromisoformat(entries[0]["startedDateTime"])
-        print(f"  Parsed HAR with {len(entries)} entries, baseline time: {t0}")
+        # print(f"  Parsed HAR with {len(entries)} entries, baseline time: {t0}")
 
         for i, entry in enumerate(entries):
             req_url = entry["request"]["url"]
@@ -157,8 +157,8 @@ def parse_har(har_file, nav_host):
                     blocked_ms = max(timings.get("blocked", 0), 0)
                     dns_start = offset_ms + blocked_ms
                     dns_end = dns_start + dns_ms
-                    print(f"    Entry {i}: {host} dns={dns_ms:.1f}ms "
-                          f"interval=({dns_start:.1f}ms, {dns_end:.1f}ms), start={entry_start}")
+                    # print(f"    Entry {i}: {host} dns={dns_ms:.1f}ms "
+                    #       f"interval=({dns_start:.1f}ms, {dns_end:.1f}ms), start={entry_start}")
                     dns_intervals.append((dns_start, dns_end))
 
                 # Track first DNS lookup per domain
@@ -226,8 +226,8 @@ def benchmark_site(p, site, run, strategy):
     domain_dns = har_metrics["domain_dns"]
 
     # Log per-domain breakdown
-    for host, dns_ms in sorted(domain_dns.items()):
-        print(f"    DNS {host}: {dns_ms:.1f}ms")
+    # for host, dns_ms in sorted(domain_dns.items()):
+    #     print(f"    DNS {host}: {dns_ms:.1f}ms")
 
     # Clean up temp file
     if os.path.exists(har_file):
@@ -250,7 +250,8 @@ def benchmark_site(p, site, run, strategy):
           f"total_dns={total_dns:.1f}ms "
           f"wall_clock_dns={wall_clock_dns:.1f}ms "
           f"load={page_load:.1f}ms "
-          f"domains_resolved={len(domain_dns)}")
+          f"domains_resolved={len(domain_dns)}",
+          flush=True)
 
     return row
 
@@ -281,16 +282,16 @@ def run_benchmark():
                 print(f"\n--- Cycle {cycle}/{runs} "
                       f"(order: {', '.join(ordered_sites)}) ---")
 
-                for site in ordered_sites:
-                    print(f"\nBenchmarking https://{site}")
+                for idx, site in enumerate(ordered_sites, 1):
+                    print(f"\n[{idx}/{len(ordered_sites)}] Benchmarking https://{site}", flush=True)
                     row = benchmark_site(p, site, cycle, strategy)
                     if row:
                         results.append(row)
         else:
             # Default: all runs for a site consecutively, then next site.
-            for site in sites:
+            for idx, site in enumerate(sites, 1):
                 log.info("Starting site: https://%s", site)
-                print(f"\nBenchmarking https://{site}")
+                print(f"\n[{idx}/{len(sites)}] Benchmarking https://{site}", flush=True)
 
                 for run in range(1, runs + 1):
                     row = benchmark_site(p, site, run, strategy)
