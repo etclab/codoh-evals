@@ -2,10 +2,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-DNSCRYPT_DIR="/home/apoudel01/downloads/project-codoh/dnscrypt-proxy"
+DNSCRYPT_DIR="../dnscrypt-proxy"
 DNSCRYPT_LISTEN="127.0.0.1:5300"
 DNSCRYPT_PID=""
 IFACE="ens4059f0np0" # while running on shs3, change if needed
+# IFACE="enp193s0f0np0" # while running on shs4, change if needed
 
 cleanup() {
     echo ""
@@ -83,7 +84,18 @@ fi
 echo ""
 echo "=== Running ODoH benchmark ==="
 cd "$SCRIPT_DIR"
-python benchmark-har.py odoh --randomize --sites=sampled-sites.csv --runs=1
+sudo apt install python3.12-venv -y
+
+python3 -m venv venv
+source venv/bin/activate
+python -m pip install playwright
+
+sleep 5
+
+playwright install
+playwright install-deps 
+
+python benchmark-har.py odoh --randomize --sites=top-10k-resolvable.csv --runs=1
 
 echo ""
 echo "Benchmark complete. Results in results_har_odoh.csv"
