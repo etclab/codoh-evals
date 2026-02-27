@@ -20,7 +20,10 @@ import json
 import logging
 import os
 import random
+import subprocess
 import sys
+import threading
+import time
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
@@ -186,18 +189,53 @@ def parse_har(har_file, nav_host):
     }
 
 
+def _force_close(context, browser):
+    """Force-kill browser process tree. Don't use Playwright's close() — it
+    uses the same WebSocket that's likely stuck."""
+    # Kill all chrome-headless processes immediately
+    subprocess.run(["pkill", "-9", "chrome-headless"], capture_output=True)
+    time.sleep(0.5)
+
+
+SITE_TIMEOUT_SECONDS = 60  # hard cap per site (backstop for Playwright's 30s)
+
+
 def benchmark_site(p, site, run, strategy):
     """Benchmark a single site and return a result dict, or None on failure."""
     url = f"https://{site}"
     nav_host = urlparse(url).hostname
     har_file = f"/tmp/har_{site}_{run}_{os.getpid()}.har"
 
-    # Restart browser each run to clear internal DNS cache
-    browser = p.chromium.launch(headless=True, args=CHROMIUM_ARGS)
-    context = browser.new_context(record_har_path=har_file)
-    page = context.new_page()
+    # Delay between browser instances to avoid resource exhaustion
+    time.sleep(1)
 
+    # Use a thread-based watchdog instead of signal.SIGALRM.
+    # Playwright's sync API uses greenlets, so SIGALRM exceptions don't
+    # propagate through the greenlet boundary. A watchdog thread that kills
+    # the browser process causes a connection error that Playwright handles
+    # normally.
+    timed_out = threading.Event()
+
+    def _watchdog():
+        timed_out.set()
+        log.error("HARD TIMEOUT after %ds for %s — killing browser",
+                  SITE_TIMEOUT_SECONDS, site)
+        subprocess.run(["pkill", "-9", "chrome-headless"], capture_output=True)
+
+    timer = threading.Timer(SITE_TIMEOUT_SECONDS, _watchdog)
+    timer.daemon = True
+    timer.start()
+
+    browser = None
+    context = None
     try:
+        # Restart browser each run to clear internal DNS cache
+        print(f"  Launching browser...", flush=True)
+        browser = p.chromium.launch(headless=True, args=CHROMIUM_ARGS)
+        context = browser.new_context(record_har_path=har_file)
+        page = context.new_page()
+
+        print(f"  Navigating to {url}...", flush=True)
         page.goto(url, wait_until="load", timeout=30000)
         page.wait_for_timeout(2000)  # let lazy JS fire subresource fetches
 
@@ -205,18 +243,23 @@ def benchmark_site(p, site, run, strategy):
             const [nav] = performance.getEntriesByType('navigation');
             return nav ? nav.loadEventEnd - nav.startTime : 0;
         }""")
-    except Exception as e:
-        log.error("Failed to load %s: %s", url, e)
-        print(f"  Run {run}: FAILED ({e})")
+
+        # Close inside try so the watchdog protects against context.close()
+        # hanging on a stuck WebSocket.
         context.close()
         browser.close()
+    except Exception as e:
+        timer.cancel()
+        msg = (f"HARD TIMEOUT after {SITE_TIMEOUT_SECONDS}s — killing browser"
+               if timed_out.is_set() else f"FAILED ({e})")
+        log.error("%s run %d: %s", site, run, msg)
+        print(f"  Run {run}: {msg}", flush=True)
+        _force_close(context, browser)
         if os.path.exists(har_file):
             os.remove(har_file)
         return None
 
-    # Closing the context flushes network data to the HAR file
-    context.close()
-    browser.close()
+    timer.cancel()
 
     # Parse HAR for DNS timings
     har_metrics = parse_har(har_file, nav_host)
