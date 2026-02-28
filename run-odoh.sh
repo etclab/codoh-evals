@@ -43,7 +43,7 @@ trap cleanup EXIT
 echo "This script needs sudo to bind DNS to port 53."
 sudo -v
 
-# Disable Cache
+# Set DNS System-wide
 
 ./set-dns.sh "$INTERFACE"
 
@@ -55,7 +55,7 @@ cd "$COREDNS_DIR" # Must be on 'odoh' branch
 make
 
 # Run in background (run.sh uses exec, so we launch directly)
-./coredns -conf=Corefile.local & COREDNS_PID=$!
+./coredns -conf=Corefile-ODOH.local & COREDNS_PID=$!
 
 # DNSCrypt Proxy Setup
 

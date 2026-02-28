@@ -2,17 +2,26 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+COREDNS_DIR="../coredns"
+COREDNS_PID=""
 DNSCRYPT_DIR="../dnscrypt-proxy"
-DNSCRYPT_LISTEN="127.0.0.1:5300"
 DNSCRYPT_PID=""
 SITES="${SITES:-sampled-100-of-2000-resolvable.csv}"
 RUNS="${RUNS:-1}"
-IFACE="ens4059f0np0" # while running on shs3, change if needed
-# IFACE="enp193s0f0np0" # while running on shs4, change if needed
+
+INTERFACE=$(ip -o route show default | awk '{print $5; exit}')
+echo "$INTERFACE"
 
 cleanup() {
     echo ""
     echo "=== Cleaning up ==="
+
+    # Stop coredns
+    if [[ -n "$COREDNS_PID" ]] && kill -0 "$COREDNS_PID" 2>/dev/null; then
+        echo "Stopping coredns (PID $COREDNS_PID)..."
+        kill "$COREDNS_PID" 2>/dev/null || true
+        wait "$COREDNS_PID" 2>/dev/null || true
+    fi
 
     # Stop dnscrypt-proxy
     if [[ -n "$DNSCRYPT_PID" ]] && kill -0 "$DNSCRYPT_PID" 2>/dev/null; then
@@ -21,8 +30,9 @@ cleanup() {
         wait "$DNSCRYPT_PID" 2>/dev/null || true
     fi
 
-    # Revert DNS and re-enable resolved cache
-    "$SCRIPT_DIR/unset-dns.sh" "$IFACE"
+    # Unset DNS
+
+    ./unset-dns.sh "$INTERFACE"
 
     echo "=== Done ==="
 }
@@ -30,11 +40,27 @@ cleanup() {
 trap cleanup EXIT
 
 # --- Prompt for sudo upfront ---
-echo "This script needs sudo to change DNS settings."
+echo "This script needs sudo to bind DNS to port 53."
 sudo -v
 
-# --- Build and start dnscrypt-proxy (DoH mode) ---
-echo "Building and starting dnscrypt-proxy (DoH) on $DNSCRYPT_LISTEN..."
+# Set DNS System-wide
+
+./set-dns.sh "$INTERFACE"
+
+# CoreDNS Setup
+
+cd "$COREDNS_DIR" # Must be on 'odoh' branch
+
+# Build
+make
+
+# Run in background (run.sh uses exec, so we launch directly)
+./coredns -conf=Corefile-DOH.local & COREDNS_PID=$!
+
+# DNSCrypt Proxy Setup
+
+# --- Build and start dnscrypt-proxy ---
+echo "Building and starting dnscrypt-proxy (DoH)..."
 
 # Kill any existing dnscrypt-proxy instances
 if pgrep -x dnscrypt-proxy >/dev/null 2>&1; then
@@ -51,15 +77,14 @@ cd "$DNSCRYPT_DIR/dnscrypt-proxy"
 go build -mod vendor
 echo "Build complete."
 
-# Run in background with the DoH-specific config
-./dnscrypt-proxy -config dnscrypt-proxy-doh.toml &
-DNSCRYPT_PID=$!
+# Run in background (run.sh uses exec, so we launch directly)
+sudo ./dnscrypt-proxy -config dnscrypt-proxy-local-doh.toml & DNSCRYPT_PID=$!
 cd "$SCRIPT_DIR"
 
 # Wait for it to be ready
 echo "Waiting for dnscrypt-proxy to start..."
 for i in $(seq 1 30); do
-    if dig @127.0.0.1 -p 5300 google.com +short +timeout=2 >/dev/null 2>&1; then
+    if dig google.com +short +timeout=2 >/dev/null 2>&1; then
         echo "dnscrypt-proxy is ready."
         break
     fi
@@ -70,9 +95,6 @@ for i in $(seq 1 30); do
     fi
     sleep 1
 done
-
-# --- Override system DNS (also disables resolved cache) ---
-"$SCRIPT_DIR/set-dns.sh" "$IFACE" "$DNSCRYPT_LISTEN"
 
 # Verify DNS resolution through DoH
 echo "Verifying DNS resolution via DoH..."
@@ -98,7 +120,7 @@ playwright install
 playwright install-deps 
 
 python benchmark-har.py doh --randomize --runs="$RUNS" \
-    --sites="$SITES" 
+    --sites="$SITES"
 
 echo ""
 echo "Benchmark complete. Results in results_har_doh.csv"
