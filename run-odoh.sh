@@ -22,7 +22,11 @@ echo "$INTERFACE"
 
 # --- Create timestamped run directory ---
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
-RUN_DIR="$SCRIPT_DIR/runs/odoh-$TIMESTAMP"
+if $USE_COREDNS; then
+    RUN_DIR="$SCRIPT_DIR/runs/odoh-coredns-$TIMESTAMP"
+else
+    RUN_DIR="$SCRIPT_DIR/runs/odoh-$TIMESTAMP"
+fi
 mkdir -p "$RUN_DIR"
 RESULTS_CSV="$RUN_DIR/results_har_odoh.csv"
 BENCH_LOG="$RUN_DIR/benchmark-har-odoh.log"
