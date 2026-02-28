@@ -86,13 +86,13 @@ log = logging.getLogger(__name__)
 
 
 def load_sites(path):
-    """Load site list from CSV (rank, domain)."""
+    """Load site list from CSV (rank, domain). Returns list of (rank, domain) tuples."""
     sites = []
     with open(path) as f:
         reader = csv.reader(f)
         for row in reader:
             if len(row) >= 2:
-                sites.append(row[1].strip())
+                sites.append((int(row[0].strip()), row[1].strip()))
     return sites
 
 
@@ -201,7 +201,7 @@ def _force_close(context, browser):
 SITE_TIMEOUT_SECONDS = 60  # hard cap per site (backstop for Playwright's 30s)
 
 
-def benchmark_site(p, site, run, strategy):
+def benchmark_site(p, site, rank, run, strategy):
     """Benchmark a single site and return a result dict, or None on failure."""
     url = f"https://{site}"
     nav_host = urlparse(url).hostname
@@ -278,6 +278,7 @@ def benchmark_site(p, site, run, strategy):
         os.remove(har_file)
 
     row = {
+        "rank": rank,
         "site": site,
         "run": run,
         "strategy": strategy,
@@ -322,29 +323,29 @@ def run_benchmark():
                 order = list(range(len(sites)))
                 random.shuffle(order)
                 ordered_sites = [sites[i] for i in order]
-                log.info("Cycle %d: order=%s", cycle, [s for s in ordered_sites])
+                log.info("Cycle %d: order=%s", cycle, [s for _, s in ordered_sites])
                 print(f"\n--- Cycle {cycle}/{runs} "
-                      f"(order: {', '.join(ordered_sites)}) ---")
+                      f"(order: {', '.join(s for _, s in ordered_sites)}) ---")
 
-                for idx, site in enumerate(ordered_sites, 1):
+                for idx, (rank, site) in enumerate(ordered_sites, 1):
                     print(f"\n[{idx}/{len(ordered_sites)}] Benchmarking https://{site}", flush=True)
-                    row = benchmark_site(p, site, cycle, strategy)
+                    row = benchmark_site(p, site, rank, cycle, strategy)
                     if row:
                         results.append(row)
         else:
             # Default: all runs for a site consecutively, then next site.
-            for idx, site in enumerate(sites, 1):
+            for idx, (rank, site) in enumerate(sites, 1):
                 log.info("Starting site: https://%s", site)
                 print(f"\n[{idx}/{len(sites)}] Benchmarking https://{site}", flush=True)
 
                 for run in range(1, runs + 1):
-                    row = benchmark_site(p, site, run, strategy)
+                    row = benchmark_site(p, site, rank, run, strategy)
                     if row:
                         results.append(row)
 
     # Write results
     fieldnames = [
-        "site", "run", "strategy",
+        "rank", "site", "run", "strategy",
         "main_dns_ms", "total_dns_sum_ms", "wall_clock_dns_ms",
         "page_load_ms", "unique_domains_resolved",
     ]
