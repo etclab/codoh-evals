@@ -70,9 +70,6 @@ trap cleanup EXIT
 echo "This script needs sudo to bind DNS to port 53."
 sudo -v
 
-# Set DNS System-wide
-./set-dns.sh "$INTERFACE"
-
 # CoreDNS Setup
 if $USE_COREDNS; then
     echo "CoreDNS enabled: building and starting local CoreDNS server..."
@@ -158,6 +155,9 @@ sleep 5
 
 playwright install
 playwright install-deps 
+
+# Set DNS System-wide
+./set-dns.sh "$INTERFACE"
 
 python benchmark-har.py doh --randomize --runs="$RUNS" \
     --sites="$SITES" \

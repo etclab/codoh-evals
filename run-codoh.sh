@@ -97,9 +97,6 @@ trap cleanup EXIT
 echo "This script needs sudo to bind DNS to port 53."
 sudo -v
 
-# Set DNS System-wide
-./set-dns.sh "$INTERFACE"
-
 # =============================================================================
 # Step 0: Build CoreDNS (codoh-design-v2 branch)
 # =============================================================================
@@ -311,6 +308,9 @@ sleep 5
 
 playwright install
 playwright install-deps 
+
+# Set DNS System-wide (only after everything has been installed)
+./set-dns.sh "$INTERFACE"
 
 python benchmark-har.py codoh --randomize --runs="$RUNS" \
     --sites="$SITES" \
