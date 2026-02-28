@@ -29,7 +29,7 @@ from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright
 
-VALID_STRATEGIES = {"vanilla", "odoh", "doh"}
+VALID_STRATEGIES = {"vanilla", "odoh", "doh", "codoh"}
 
 CHROMIUM_ARGS = [
     "--dns-prefetch-disable",
