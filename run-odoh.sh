@@ -103,11 +103,18 @@ fi
 
 # Build
 cd "$DNSCRYPT_DIR/dnscrypt-proxy"
+git switch master
 go build -mod vendor
 echo "Build complete."
 
 # Run in background (run.sh uses exec, so we launch directly)
-sudo ./dnscrypt-proxy -config dnscrypt-proxy-local-odoh.toml & DNSCRYPT_PID=$!
+if $USE_COREDNS; then
+    DNSCRYPT_CONF="dnscrypt-proxy-local-odoh.toml"
+else
+    DNSCRYPT_CONF="dnscrypt-proxy-odoh.toml"
+fi
+echo "Using dnscrypt-proxy config: $DNSCRYPT_CONF"
+sudo ./dnscrypt-proxy -config "$DNSCRYPT_CONF" & DNSCRYPT_PID=$!
 cd "$SCRIPT_DIR"
 
 # Wait for it to be ready
