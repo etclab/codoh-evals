@@ -58,7 +58,7 @@ cleanup() {
     fi
 
     # Unset DNS
-
+    cd "$SCRIPT_DIR"
     ./unset-dns.sh "$INTERFACE"
 
     echo "=== Done ==="

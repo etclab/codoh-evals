@@ -15,6 +15,8 @@
         - Outputs: `cdf_odoh_doh.pdf`
     - Compare (dns / page load) time ratio betn DoH & ODoH: `gnuplot plot_dns_ratio.gnuplot`
         - Outputs: `cdf_dns_ratio.pdf`
+- Ensure you run `make` inside of `coredns` while cloning the repo as go deps won't be resolved if `coredns` is used for the first time.
+- Ensure you run `cert-maker.sh` to generate/load certificates.
     
 
 ## Steps
