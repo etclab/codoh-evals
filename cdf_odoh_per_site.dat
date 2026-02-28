@@ -1,0 +1,9 @@
+# rank	site	wall_clock_dns_mean_ms	wall_clock_dns_std_ms	page_load_mean_ms	page_load_std_ms
+67	c.pki.goog	28.2610	5.5702	290.7800	92.9323
+71	www.bing.com	322.6402	31.5610	453.6800	53.1445
+78	office365.com	867.2620	59.9633	4669.3000	228.9681
+83	www.youtube.com	197.8610	20.7624	2180.7400	69.2016
+110	fastly.net	669.2226	66.0210	882.2000	19.9315
+116	lh3.googleusercontent.com	22.9998	5.9815	1090.3800	5.5863
+178	cornell.edu	323.0556	68.6698	1312.4800	106.9684
+185	instagram.com	93.5296	20.0451	829.1800	182.9807

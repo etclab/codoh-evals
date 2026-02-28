@@ -6,12 +6,12 @@
     - Outputs: `results_har_odoh.csv`
 - Default values for `SITES=sampled-100-of-2000-resolvable.csv` and `RUNS=1`
 - Once you have the results run (inside venv): 
-    - For DoH: `python3 plot_cdf.py results_har_doh.csv -o cdf_doh.dat`
+    - For DoH: `python3 prepare_plot_data.py results_har_doh.csv -o cdf_doh.dat`
         - Outputs: `cdf_doh.dat` and `cdf_doh_dns_ratio.dat`
-    - For ODoH: `python3 plot_cdf.py results_har_odoh.csv -o cdf_odoh.dat`
+    - For ODoH: `python3 prepare_plot_data.py results_har_odoh.csv -o cdf_odoh.dat`
         - Outputs: `cdf_odoh.dat` and `cdf_odoh_dns_ratio.dat`
 - Plot using gnuplot:
-    - Compares dns vs page load time betn DoH & ODoH: `gnuplot plot_cdf.gnuplot`
+    - Compares dns vs page load time betn DoH & ODoH: `gnuplot prepare_plot_data.gnuplot`
         - Outputs: `cdf_odoh_doh.pdf`
     - Compare (dns / page load) time ratio betn DoH & ODoH: `gnuplot plot_dns_ratio.gnuplot`
         - Outputs: `cdf_dns_ratio.pdf`
