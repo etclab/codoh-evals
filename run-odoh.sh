@@ -8,6 +8,14 @@ DNSCRYPT_DIR="../dnscrypt-proxy"
 DNSCRYPT_PID=""
 SITES="${SITES:-sampled-100-of-2000-resolvable.csv}"
 RUNS="${RUNS:-1}"
+USE_COREDNS=false
+
+# --- Parse arguments ---
+for arg in "$@"; do
+    case "$arg" in
+        --coredns) USE_COREDNS=true ;;
+    esac
+done
 
 INTERFACE=$(ip -o route show default | awk '{print $5; exit}')
 echo "$INTERFACE"
@@ -30,10 +38,12 @@ cleanup() {
     echo "=== Cleaning up ==="
 
     # Stop coredns
-    if [[ -n "$COREDNS_PID" ]] && kill -0 "$COREDNS_PID" 2>/dev/null; then
-        echo "Stopping coredns (PID $COREDNS_PID)..."
-        kill "$COREDNS_PID" 2>/dev/null || true
-        wait "$COREDNS_PID" 2>/dev/null || true
+    if $USE_COREDNS; then
+        if [[ -n "$COREDNS_PID" ]] && kill -0 "$COREDNS_PID" 2>/dev/null; then
+            echo "Stopping coredns (PID $COREDNS_PID)..."
+            kill "$COREDNS_PID" 2>/dev/null || true
+            wait "$COREDNS_PID" 2>/dev/null || true
+        fi
     fi
 
     # Stop dnscrypt-proxy
@@ -57,18 +67,24 @@ echo "This script needs sudo to bind DNS to port 53."
 sudo -v
 
 # Set DNS System-wide
-
 ./set-dns.sh "$INTERFACE"
 
 # CoreDNS Setup
+if $USE_COREDNS; then
+    echo "CoreDNS enabled: building and starting local CoreDNS server..."
+    cd "$COREDNS_DIR"
 
-cd "$COREDNS_DIR" # Must be on 'odoh' branch
+    # ensure we're in the right branch
+    git switch odoh
 
-# Build
-make
+    # Build
+    make
 
-# Run in background (run.sh uses exec, so we launch directly)
-./coredns -conf=Corefile-ODOH.local & COREDNS_PID=$!
+    # Run in background (run.sh uses exec, so we launch directly)
+    ./coredns -conf=Corefile-ODOH.local & COREDNS_PID=$!
+else
+    echo "CoreDNS disabled: using public ODoH servers via dnscrypt-proxy."
+fi
 
 # DNSCrypt Proxy Setup
 
