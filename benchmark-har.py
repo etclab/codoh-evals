@@ -287,6 +287,7 @@ def benchmark_site(p, site, rank, run, strategy):
         "wall_clock_dns_ms": wall_clock_dns,
         "page_load_ms": page_load,
         "unique_domains_resolved": len(domain_dns),
+        "domains_resolved": ";".join(sorted(domain_dns.keys())),
     }
 
     log.info("  Run %d: main_dns=%.1fms total_dns=%.1fms wall_clock_dns=%.1fms load=%.1fms domains=%d",
@@ -313,48 +314,53 @@ def run_benchmark():
     print(f"Loaded {len(sites)} sites  [strategy={strategy}, runs={runs}, "
           f"randomize={randomize}]")
 
-    results = []
-
-    with sync_playwright() as p:
-        if randomize:
-            # Cycle-based: each cycle shuffles the site list independently
-            # to eliminate time-of-day bias across sites.
-            for cycle in range(1, runs + 1):
-                order = list(range(len(sites)))
-                random.shuffle(order)
-                ordered_sites = [sites[i] for i in order]
-                log.info("Cycle %d: order=%s", cycle, [s for _, s in ordered_sites])
-                print(f"\n--- Cycle {cycle}/{runs} "
-                      f"(order: {', '.join(s for _, s in ordered_sites)}) ---")
-
-                for idx, (rank, site) in enumerate(ordered_sites, 1):
-                    print(f"\n[{idx}/{len(ordered_sites)}] Benchmarking https://{site}", flush=True)
-                    row = benchmark_site(p, site, rank, cycle, strategy)
-                    if row:
-                        results.append(row)
-        else:
-            # Default: all runs for a site consecutively, then next site.
-            for idx, (rank, site) in enumerate(sites, 1):
-                log.info("Starting site: https://%s", site)
-                print(f"\n[{idx}/{len(sites)}] Benchmarking https://{site}", flush=True)
-
-                for run in range(1, runs + 1):
-                    row = benchmark_site(p, site, rank, run, strategy)
-                    if row:
-                        results.append(row)
-
-    # Write results
     fieldnames = [
         "rank", "site", "run", "strategy",
         "main_dns_ms", "total_dns_sum_ms", "wall_clock_dns_ms",
-        "page_load_ms", "unique_domains_resolved",
+        "page_load_ms", "unique_domains_resolved", "domains_resolved",
     ]
+
+    row_count = 0
     with open(OUTPUT_FILE, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
-        writer.writerows(results)
+        f.flush()
 
-    log.info("Results written to %s (%d rows)", OUTPUT_FILE, len(results))
+        def _write(row):
+            nonlocal row_count
+            writer.writerow(row)
+            f.flush()
+            row_count += 1
+
+        with sync_playwright() as p:
+            if randomize:
+                # Cycle-based: each cycle shuffles the site list independently
+                # to eliminate time-of-day bias across sites.
+                for cycle in range(1, runs + 1):
+                    order = list(range(len(sites)))
+                    random.shuffle(order)
+                    ordered_sites = [sites[i] for i in order]
+                    log.info("Cycle %d: order=%s", cycle, [s for _, s in ordered_sites])
+                    print(f"\n--- Cycle {cycle}/{runs} "
+                          f"(order: {', '.join(s for _, s in ordered_sites)}) ---")
+
+                    for idx, (rank, site) in enumerate(ordered_sites, 1):
+                        print(f"\n[{idx}/{len(ordered_sites)}] Benchmarking https://{site}", flush=True)
+                        row = benchmark_site(p, site, rank, cycle, strategy)
+                        if row:
+                            _write(row)
+            else:
+                # Default: all runs for a site consecutively, then next site.
+                for idx, (rank, site) in enumerate(sites, 1):
+                    log.info("Starting site: https://%s", site)
+                    print(f"\n[{idx}/{len(sites)}] Benchmarking https://{site}", flush=True)
+
+                    for run in range(1, runs + 1):
+                        row = benchmark_site(p, site, rank, run, strategy)
+                        if row:
+                            _write(row)
+
+    log.info("Results written to %s (%d rows)", OUTPUT_FILE, row_count)
     print(f"\nResults written to {OUTPUT_FILE}")
 
 
