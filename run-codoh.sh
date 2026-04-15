@@ -259,11 +259,8 @@ go build -mod vendor
 echo "dnscrypt-proxy build complete."
 
 # Use the CoDOH config file from the dnscrypt-proxy repo.
-# Override root_ca path with an absolute path to the .signing certs.
 DNSCRYPT_CONF="$RUN_DIR/dnscrypt-proxy-codoh.toml"
-SIGNING_DIR_ABS="$(cd "$SCRIPT_DIR/$COREDNS_DIR/.signing" && pwd)"
-sed "s|root_ca = '.*'|root_ca = '${SIGNING_DIR_ABS}/target.pem'|" \
-    dnscrypt-proxy-codoh.toml > "$DNSCRYPT_CONF"
+cat dnscrypt-proxy-codoh.toml > "$DNSCRYPT_CONF"
 echo "Using dnscrypt-proxy config: $DNSCRYPT_CONF"
 
 sudo ./dnscrypt-proxy -config "$DNSCRYPT_CONF" & DNSCRYPT_PID=$!
