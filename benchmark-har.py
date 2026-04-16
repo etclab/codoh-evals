@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import random
+import shutil
 import subprocess
 import sys
 import threading
@@ -190,11 +191,10 @@ def parse_har(har_file, nav_host):
     }
 
 
-def _force_close(context, browser):
-    """Force-kill browser process tree. Don't use Playwright's close() — it
-    uses the same WebSocket that's likely stuck."""
-    # Kill all chrome-headless processes immediately
-    subprocess.run(["pkill", "-9", "chrome-headless"], capture_output=True)
+def _force_close(user_data_dir):
+    """Force-kill this run's browser process tree. Match on the unique
+    user-data-dir so we don't touch sibling benchmarks running in parallel."""
+    subprocess.run(["pkill", "-9", "-f", user_data_dir], capture_output=True)
     time.sleep(0.5)
 
 
@@ -205,7 +205,9 @@ def benchmark_site(p, site, rank, run, strategy):
     """Benchmark a single site and return a result dict, or None on failure."""
     url = f"https://{site}"
     nav_host = urlparse(url).hostname
-    har_file = f"/tmp/har_{site}_{run}_{os.getpid()}.har"
+    safe_site = site.replace("/", "_")
+    har_file = f"/tmp/har_{safe_site}_{run}_{os.getpid()}.har"
+    user_data_dir = f"/tmp/chrome_bench_{os.getpid()}_{run}_{safe_site}"
 
     # Delay between browser instances to avoid resource exhaustion
     time.sleep(1)
@@ -221,19 +223,26 @@ def benchmark_site(p, site, rank, run, strategy):
         timed_out.set()
         log.error("HARD TIMEOUT after %ds for %s — killing browser",
                   SITE_TIMEOUT_SECONDS, site)
-        subprocess.run(["pkill", "-9", "chrome-headless"], capture_output=True)
+        # Scope the kill to this run's unique user-data-dir so parallel
+        # benchmark processes' browsers aren't collateral damage.
+        subprocess.run(["pkill", "-9", "-f", user_data_dir], capture_output=True)
 
     timer = threading.Timer(SITE_TIMEOUT_SECONDS, _watchdog)
     timer.daemon = True
     timer.start()
 
-    browser = None
     context = None
     try:
-        # Restart browser each run to clear internal DNS cache
+        # Restart browser each run to clear internal DNS cache.
+        # launch_persistent_context embeds user_data_dir in the Chrome
+        # cmdline, giving us a unique signature to pkill against.
         print(f"  Launching browser...", flush=True)
-        browser = p.chromium.launch(headless=True, args=CHROMIUM_ARGS)
-        context = browser.new_context(record_har_path=har_file)
+        context = p.chromium.launch_persistent_context(
+            user_data_dir=user_data_dir,
+            headless=True,
+            args=CHROMIUM_ARGS,
+            record_har_path=har_file,
+        )
         page = context.new_page()
 
         print(f"  Navigating to {url}...", flush=True)
@@ -248,19 +257,20 @@ def benchmark_site(p, site, rank, run, strategy):
         # Close inside try so the watchdog protects against context.close()
         # hanging on a stuck WebSocket.
         context.close()
-        browser.close()
     except Exception as e:
         timer.cancel()
         msg = (f"HARD TIMEOUT after {SITE_TIMEOUT_SECONDS}s — killing browser"
                if timed_out.is_set() else f"FAILED ({e})")
         log.error("%s run %d: %s", site, run, msg)
         print(f"  Run {run}: {msg}", flush=True)
-        _force_close(context, browser)
+        _force_close(user_data_dir)
         if os.path.exists(har_file):
             os.remove(har_file)
+        shutil.rmtree(user_data_dir, ignore_errors=True)
         return None
 
     timer.cancel()
+    shutil.rmtree(user_data_dir, ignore_errors=True)
 
     # Parse HAR for DNS timings
     har_metrics = parse_har(har_file, nav_host)
