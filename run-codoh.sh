@@ -24,7 +24,7 @@ COREDNS_TARGET_PID=""
 COREDNS_PROXY_PID=""
 DNSCRYPT_PID=""
 
-SITES="${SITES:-sampled-100-of-2000-resolvable.csv}"
+SITES="${SITES:-data/top-10k-resolvable.csv}"
 RUNS="${RUNS:-1}"
 
 # Enclave settings (simulation mode — no SGX hardware required)

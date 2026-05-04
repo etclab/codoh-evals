@@ -1,7 +1,7 @@
-RUNS=10 SITES=sampled-1000-of-2000-resolvable.csv ./run-doh.sh --coredns
-RUNS=10 SITES=sampled-1000-of-2000-resolvable.csv ./run-odoh.sh --coredns
+RUNS=10 SITES=data/top-10k-resolvable.csv ./run-doh.sh --coredns
+RUNS=10 SITES=data/top-10k-resolvable.csv ./run-odoh.sh --coredns
 
-RUNS=10 SITES=sampled-1000-of-2000-resolvable.csv ./run-codoh.sh
+RUNS=10 SITES=data/top-10k-resolvable.csv ./run-codoh.sh
 
 
-RUNS=1 SITES=top-1k.csv ./run-doh.sh --coredns
+RUNS=1 SITES=data/top-10k-resolvable.csv ./run-doh.sh --coredns

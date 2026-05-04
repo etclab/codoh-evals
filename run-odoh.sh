@@ -6,7 +6,7 @@ COREDNS_DIR="../coredns"
 COREDNS_PID=""
 DNSCRYPT_DIR="../dnscrypt-proxy"
 DNSCRYPT_PID=""
-SITES="${SITES:-sampled-100-of-2000-resolvable.csv}"
+SITES="${SITES:-data/top-10k-resolvable.csv}"
 RUNS="${RUNS:-1}"
 USE_COREDNS=false
 

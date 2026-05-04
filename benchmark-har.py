@@ -50,8 +50,8 @@ def parse_args():
         help="DNS resolution strategy to benchmark",
     )
     parser.add_argument(
-        "--sites", default="top-10.csv",
-        help="CSV file with (rank, domain) rows (default: top-10.csv)",
+        "--sites", default="data/top-10k-resolvable.csv",
+        help="CSV file with (rank, domain) rows (default: data/top-10k-resolvable.csv)",
     )
     parser.add_argument(
         "--log",

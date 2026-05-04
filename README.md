@@ -1,19 +1,24 @@
+## Layout
+- `data/` — input domain CSVs (Cisco Umbrella top-10k resolvable + 1k position-split chunks)
+- `plots/` — plotting scripts (`prepare_plot_data.py`, `*.gnuplot`) and the legacy `.dat`/`.pdf`/`results_har_*.csv` snapshots
+- `runs/` — timestamped per-strategy benchmark output (`runs/<strategy>-<ts>/results_har_<strategy>.csv`)
+
 ## Benchmarks
 - Ensure [`dnscrypt-proxy`](https://github.com/etclab/dnscrypt-proxy/) is installed alongside this repo
-- Run DoH with: `SITES=name.csv RUNS=2 ./run-doh.sh`
-    - Outputs: `results_har_doh.csv`
-- Run ODoH with: `SITES=name.csv RUNS=2 ./run-doh.sh`
-    - Outputs: `results_har_odoh.csv`
-- Default values for `SITES=sampled-100-of-2000-resolvable.csv` and `RUNS=1`
-- Once you have the results run (inside venv): 
-    - For DoH: `python3 prepare_plot_data.py results_har_doh.csv -o cdf_doh.dat`
+- Run DoH with: `SITES=data/name.csv RUNS=2 ./run-doh.sh`
+    - Outputs: `runs/doh-<ts>/results_har_doh.csv`
+- Run ODoH with: `SITES=data/name.csv RUNS=2 ./run-odoh.sh`
+    - Outputs: `runs/odoh-<ts>/results_har_odoh.csv`
+- Default values for `SITES=data/top-10k-resolvable.csv` and `RUNS=1`. The bundled `data/top-10k-resolvable.csv` is the Cisco Umbrella top-10k filtered to domains that resolved successfully.
+- Once you have the results, generate plots from `plots/` (inside venv):
+    - For DoH: `cd plots && python3 prepare_plot_data.py ../runs/doh-<ts>/results_har_doh.csv -o cdf_doh.dat`
         - Outputs: `cdf_doh.dat` and `cdf_doh_dns_ratio.dat`
-    - For ODoH: `python3 prepare_plot_data.py results_har_odoh.csv -o cdf_odoh.dat`
+    - For ODoH: `cd plots && python3 prepare_plot_data.py ../runs/odoh-<ts>/results_har_odoh.csv -o cdf_odoh.dat`
         - Outputs: `cdf_odoh.dat` and `cdf_odoh_dns_ratio.dat`
-- Plot using gnuplot:
-    - Compares dns vs page load time betn DoH & ODoH: `gnuplot prepare_plot_data.gnuplot`
+- Plot using gnuplot (from `plots/`):
+    - DNS vs page load time, DoH vs ODoH: `gnuplot plot_cdf.gnuplot`
         - Outputs: `cdf_odoh_doh.pdf`
-    - Compare (dns / page load) time ratio betn DoH & ODoH: `gnuplot plot_dns_ratio.gnuplot`
+    - DNS / page load time ratio, DoH vs ODoH: `gnuplot plot_dns_ratio.gnuplot`
         - Outputs: `cdf_dns_ratio.pdf`
 - Ensure you run `make` inside of `coredns` while cloning the repo as go deps won't be resolved if `coredns` is used for the first time.
 - Ensure you run `cert-maker.sh` to generate/load certificates.

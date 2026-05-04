@@ -7,8 +7,10 @@ set -euo pipefail
 # Usage:
 #   RUNS=1 ./run-doh-parallel.sh [--coredns] [--jobs N]
 #
-# By default runs all 10 CSV chunks (top-1k.csv through top-9001-10k.csv).
-# Override with:  SITE_FILES="top-1k.csv top-1001-2k.csv" ./run-doh-parallel.sh
+# By default runs the 10 Umbrella-resolvable chunks under data/
+# (data/resolvable-1k.csv … data/resolvable-9001-10k.csv), each 1000 rows of
+# top-10k-resolvable.csv split by position. Override with:
+#   SITE_FILES="data/resolvable-1k.csv data/resolvable-1001-2k.csv" ./run-doh-parallel.sh
 #
 # --jobs N   Max parallel benchmark processes (default: 10, i.e. all at once)
 # =============================================================================
@@ -24,16 +26,16 @@ MAX_JOBS=10
 
 # All 10 CSV chunks by default
 DEFAULT_SITE_FILES=(
-    top-1k.csv
-    top-1001-2k.csv
-    top-2001-3k.csv
-    top-3001-4k.csv
-    top-4001-5k.csv
-    top-5001-6k.csv
-    top-6001-7k.csv
-    top-7001-8k.csv
-    top-8001-9k.csv
-    top-9001-10k.csv
+    data/resolvable-1k.csv
+    data/resolvable-1001-2k.csv
+    data/resolvable-2001-3k.csv
+    data/resolvable-3001-4k.csv
+    data/resolvable-4001-5k.csv
+    data/resolvable-5001-6k.csv
+    data/resolvable-6001-7k.csv
+    data/resolvable-7001-8k.csv
+    data/resolvable-8001-9k.csv
+    data/resolvable-9001-10k.csv
 )
 
 # --- Parse arguments ---
@@ -257,7 +259,7 @@ echo ""
 
 # List result files
 for csv_file in "${CSV_FILES[@]}"; do
-    label="${csv_file%.csv}"
+    label="$(basename "${csv_file%.csv}")"
     result="$BATCH_DIR/$label/results_har_doh.csv"
     if [[ -f "$result" ]]; then
         rows=$(wc -l < "$result")

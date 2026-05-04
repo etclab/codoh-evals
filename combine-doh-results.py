@@ -36,7 +36,7 @@ def main() -> int:
         return 1
 
     rows: list[dict[str, str]] = []
-    sub_dirs = sorted(p for p in batch_dir.glob("top-*") if p.is_dir())
+    sub_dirs = sorted(p for p in batch_dir.glob("resolvable-*") if p.is_dir())
 
     for sub in sub_dirs:
         csv_path = sub / "results_har_doh.csv"
