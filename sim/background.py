@@ -1,13 +1,12 @@
-"""Background traffic model (sim-spec §4).
+"""Background traffic model.
 
 `λ_bg` = N concurrent users. Each user emits two streams:
   - **Bursts**: every ~30s (Poisson), pick a random page from the trace
     and replay its `Q_w` with the page's per-entry inter-arrivals.
-  - **Idle Poisson heartbeat**: 0.01 qps from a Zipf-weighted universe
-    (sim-spec §4 names "Zipf(top-1M)" — for now we reuse the cover
-    universe; cap noted in `cover.py`).
+  - **Idle Poisson heartbeat**: 0.01 qps from the Zipf-weighted cover
+    universe (CrUX top-1M, see `cover.py`).
 
-Both streams flow into the same enclave batch buffer (sim-spec §4 closing).
+Both streams flow into the same enclave batch buffer.
 
 Pre-generates events for the trial window [0, t_end_ms] and returns them
 as a sorted list of (host, t_ms). Trial-scale event counts are small

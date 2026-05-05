@@ -140,7 +140,7 @@ Each background user emits, **independently**:
   top-10k crawl and emit its `Q_w` queries with realistic inter-arrivals
   (replayed from the page's trace if available, otherwise lognormal).
 - **Idle Poisson heartbeat:** 0.01 qps (1 query per 100s on average) of
-  random domains drawn from Zipf(top-1M).
+  random domains drawn from the cover universe (CrUX top-1M, §6.2).
 
 Both streams flow into the same enclave batch buffer as the victim's queries.
 
@@ -200,11 +200,20 @@ For each real query in the batch, the target draws `k` covers **i.i.d. from
 `D` with replacement**. Total covers per commit = `B_eff × k` (collisions
 permitted; reduce `|S'|`).
 
-`D` is configurable:
+`D` is configurable; universe = **CrUX top-1M** (`data/crux-202603.csv`,
+schema `origin,rank` with magnitude-band ranks {1k, 5k, 10k, 50k, 100k,
+500k, 1M}). Per-origin Zipf weight is the average mass of a 1/r Zipf
+integrated across each band (decision #47):
 
-- `matched` (headline): empirical Zipf over Umbrella top-1M.
-- `uniform`: uniform over Umbrella top-1M.
-- `stale`: uniform over a random 50% subset of Umbrella top-1M (frozen).
+- `matched` (headline): empirical Zipf over CrUX top-1M.
+- `uniform`: uniform over CrUX top-1M.
+- `stale`: uniform over a random 50% subset of CrUX top-1M (frozen).
+
+CrUX (origin-ranked by real Chrome navigations) is used for both the
+reference set (§3.2, top-10k) and the cover universe (top-1M); the two
+roles use different files but the same source — so cover draws can land
+inside the candidate set, which is exactly the regime that makes covers
+hard to distinguish from real queries.
 
 ---
 
@@ -701,6 +710,7 @@ encodes: the question, the chosen option, and a one-line rationale.
 | 44 | Attacker tie semantics | strict — top-K is a hit only when victim's tie group fits in top-K (`g+t ≤ K`) | alphabetical tiebreak biased top-1 toward early-named sites; strict is honest under "tied candidates indistinguishable" (2026-05-05) |
 | 45 | Owner tracking on overlap | per-host owner *set* (union); overlap host counts as `victim_real` | first-seen-owner under-reported leakage when bg queried a host before victim; `S' ⊇ victim_real` (§7.1) demands overlap survive subtraction (2026-05-05) |
 | 46 | Time-trigger on sparse traffic | trial loop fires `tick(first_t + T_max)` when gap exceeds T_max | event-boundary tick'ing alone left `t_commit` drifting to the next event under low λ_bg, corrupting the T_max axis (2026-05-05) |
+| 47 | Cover universe | CrUX top-1M (`data/crux-202603.csv`); per-origin weight = ln(high/low)/(high-low) over each band | replaces placeholder Umbrella reference; CrUX exposes only band-rank, so within-band sampling is uniform and inter-band ratios follow integrated 1/r Zipf — same source as reference set §3.2 (2026-05-05) |
 
 ---
 

@@ -49,6 +49,8 @@ simulator's input.
 - `SOURCE_CSV=path` — override the input CSV (default `data/crux-top10k-resolvable.csv`).
 - `SITE_FILES="a.csv b.csv ..."` — explicit chunk list (skips on-the-fly split).
 
+The runner chunks `SOURCE_CSV` inline (`split` into `runs/vanilla-parallel-<ts>/inputs/`), so any single-file CSV works — no pre-chunked `resolvable-*.csv` fixtures needed. Those legacy chunks in `data/` feed only `run-doh-parallel.sh`.
+
 ### Checkpointed / top-up collection
 Each invocation numbers runs starting at 1, so concatenating two batches naively
 collides on `(site, run, day)`. Use `RUN_OFFSET` to shift the second batch's

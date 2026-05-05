@@ -1,21 +1,21 @@
-"""Enclave batch buffer + commit logic (sim-spec §6, §7.1).
+"""Enclave batch buffer + commit logic.
 
 `BatchBuffer.submit(host, t, owner)` accumulates a real query. The buffer
 fires a commit when the size trigger (`|unique pending| ≥ B`) hits; the
 caller polls `tick(t)` to fire the time trigger (`t - first_t ≥ T_max`).
 
 A commit:
-  1. samples covers via the injected callable (slice 3 wires this; default
-     returns `[]` — slice-2 commits have no covers, so leakage is upper-bound).
+  1. samples covers via the injected callable (default returns `[]` — a
+     no-cover commit, which is the upper bound on leakage).
   2. forms `inserts = unique_real + covers`, suppresses pre-cached entries
      against the cache, and updates the cache with the survivors.
   3. constructs `S = post-suppression inserts` and the strong-attacker
-     observation `S' = multiset_diff(S, bg_real_known)` — covers stay sealed
-     in the target→enclave bundle (sim-spec §7.1, decision #10).
+     observation `S' = multiset_diff(S, bg_real_known)` — covers stay
+     sealed in the target→enclave bundle, so they remain in S'.
 
-Underflow (sim-spec §6.1): when T_max fires with `unique pending < B_min`,
-the enclave reverts to ODoH, pending insertions are discarded, no `S'`
-contribution is made, and `B_eff = 0` is logged.
+Underflow: when T_max fires with `unique pending < B_min`, the enclave
+reverts to ODoH, pending insertions are discarded, no `S'` contribution
+is made, and `B_eff = 0` is logged.
 """
 
 from __future__ import annotations
@@ -87,9 +87,9 @@ class BatchBuffer:
         self._pending: list[_Pending] = []
         # host -> set of owners that queried it. A host is `victim_real` if
         # "victim" is in its owner set, regardless of which owner issued
-        # the query first — sim-spec §7.1 mandates `S' ⊇ victim_real`, so
-        # an overlap host (queried by both bg and victim) must survive the
-        # strong-attacker subtraction.
+        # the query first. The strong-attacker invariant is `S' ⊇
+        # victim_real`, so an overlap host (queried by both bg and victim)
+        # must survive the strong-attacker subtraction.
         self._unique: dict[str, set[str]] = {}
         self._first_t: float | None = None
         self._next_batch_id = 0
@@ -157,18 +157,21 @@ class BatchBuffer:
         covers = self.sample_covers(victim_real, bg_real)
         inserts = unique_real + [c.hostname for c in covers]
 
-        # Pre-cache suppression (§5.2). add_all returns the survivors.
+        # Pre-cache suppression: add_all skips already-cached hosts and
+        # returns only the survivors (the actual cache-state delta).
         suppressed_set = {h for h in inserts if h in self.cache}
         new_entries = self.cache.add_all(inserts)
 
-        # S = post-suppression inserts (sim-spec §7.1 prose; the §11.2 listing
-        # uses `S = inserts` but that contradicts the prose — we follow §7.1).
+        # S = post-suppression inserts: the attacker observes the cache-
+        # state delta, not the raw insert request, so pre-cached hosts
+        # that never modify the cache must not appear in S.
         S = list(new_entries)
 
         # Strong-attacker subtraction: remove bg-only instances from S.
         # Overlap hosts are in victim_real (above), not bg_real, so they
-        # survive subtraction — matches sim-spec §7.1 `S' ⊇ victim_real`.
-        # Covers stay (sealed in the bundle; decision #10).
+        # survive subtraction — preserves `S' ⊇ victim_real`. Covers
+        # stay in S' (sealed in the target→enclave bundle, the attacker
+        # has no visibility into per-query cover sets).
         S_prime_counter = Counter(S)
         for h in bg_real:
             if S_prime_counter.get(h, 0) > 0:

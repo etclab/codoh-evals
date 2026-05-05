@@ -1,4 +1,4 @@
-"""Closed-form sanity (sim-spec §12 criterion 1, §7.4).
+"""Closed-form sanity tests.
 
 Two cases run as MC against analytic predictions:
 

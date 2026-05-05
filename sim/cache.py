@@ -1,8 +1,9 @@
-"""LRU cache with pre-cache suppression on insert (sim-spec §5).
+"""LRU cache with pre-cache suppression on insert.
 
 A domain already present is "suppressed" — `add_all` skips it (no LRU
 update) and reports the actual *new* insertions. Those are what the
-attacker observes (sim-spec §5.2, §7.1).
+attacker observes; the cache-state delta is exactly the set of new
+insertions, not the raw insert request.
 """
 
 from __future__ import annotations
@@ -28,8 +29,9 @@ class LRUCache:
 
     def add_all(self, hosts: Iterable[str]) -> list[str]:
         """Insert every host not already present; return the list of newly
-        inserted hosts in submission order. Pre-cached hosts are suppressed
-        (no LRU touch — matches sim-spec §5.2 "no-op insertion").
+        inserted hosts in submission order. Pre-cached hosts are no-op
+        insertions: skipped, no LRU touch, and excluded from the returned
+        list (so they don't show up in the attacker-visible delta).
         """
         new_inserts: list[str] = []
         for h in hosts:

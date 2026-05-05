@@ -1,7 +1,9 @@
 """Acceptance tests for trace_loader.
 
-Real-data regression (sim-spec §12 criterion 2b) and synthetic-generator
-plumbing checks. Run with: `python -m sim.tests.test_trace_loader`.
+Real-data regression (asserts the loader reproduces the expected page
+count and `|Q_w|` distribution from the validation pass) plus
+synthetic-generator plumbing checks.
+Run with: `python -m sim.tests.test_trace_loader`.
 """
 
 from __future__ import annotations
@@ -74,7 +76,8 @@ def test_monotonic_offsets():
 
 
 def test_all_runs_intact_filter():
-    """Decision #40: filter drops sites missing any run; advertised n is honest."""
+    """Filter drops sites missing any run, so advertised `n` is honest
+    (~9% of (site×run) pairs are gaps, unevenly distributed across sites)."""
     trace = load_real(REAL_CSV)
     full = trace.filter_all_runs_intact()
     rps = full.runs_per_site()

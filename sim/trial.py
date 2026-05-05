@@ -1,4 +1,4 @@
-"""Per-trial simulation loop (sim-spec §11.1).
+"""Per-trial simulation loop.
 
 A trial = one victim page × one (B, T_max, k, λ_bg, N, α, D, init) cell ×
 one trial seed. Drives the victim's trace + pre-generated background
@@ -24,7 +24,7 @@ from .trace_loader import Trace
 @dataclass
 class TrialParams:
     B: int
-    T_max_s: float          # seconds (matches sim-spec §9 grid)
+    T_max_s: float          # seconds
     k: int = 3
     lambda_bg: int = 100    # concurrent bg users
     N: int = 1024           # cache capacity
@@ -52,7 +52,7 @@ class TrialLog:
         return out
 
     def lens_a(self, reference_set: dict[str, set[str]]) -> list[AttackResult]:
-        """Per-batch attack results (sim-spec §8.1)."""
+        """Per-batch attack results (lens a — popularity-conditioned ID)."""
         out = []
         for c in self.commits:
             if not (c.victim_in_batch or c.victim_covers):
@@ -62,7 +62,7 @@ class TrialLog:
         return out
 
     def lens_b(self, reference_set: dict[str, set[str]]) -> AttackResult:
-        """Cross-batch-union attack result (sim-spec §8.2 headline lens)."""
+        """Cross-batch-union attack result (lens b — headline lens)."""
         return evaluate(self.S_prime_total, reference_set, self.victim_site,
                         alpha=self.params.alpha)
 
@@ -92,9 +92,8 @@ def run_trial(
     if params.init not in ("cold", "warm"):
         raise ValueError(params.init)
     if params.init == "warm":
-        # Burn-in: run background-only until cache reaches N unique entries
-        # (sim-spec §5.3 ablation). Skipped in slice 3 — will plumb later.
-        raise NotImplementedError("warm init not wired yet (slice 3)")
+        # Burn-in: run background-only until cache reaches N unique entries.
+        raise NotImplementedError("warm init not wired yet")
 
     # cover sampler
     dist = make_distribution(params.D, cover_universe)

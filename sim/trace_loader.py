@@ -1,18 +1,18 @@
 """Per-entry trace loader and synthetic generator for the CODoH simulator.
 
-Schema (sim-spec §3.1):
+Schema:
     rank, site, run, day, hostname, started_offset_ms, dns_ms
 
 `dns_ms == 0` is the failed-DNS sentinel (NXDOMAIN/SERVFAIL/timeout) — the
 query reached the resolver in production, so it is a first-class observable
-and the simulator must batch it at `started_offset_ms` (decision #41).
+and the simulator must batch it at `started_offset_ms`.
 
 Public surface:
     load_real(path)                          -> Trace
     generate_synthetic(n_sites, n_runs, ...) -> Trace
-    Trace.filter_all_runs_intact()           -> Trace        (decision #40)
+    Trace.filter_all_runs_intact()           -> Trace
     Trace.stats()                            -> dict
-    Trace.magnitude_band_sample(rng, ...)    -> bucket sample (sim-spec §8.1)
+    Trace.magnitude_band_sample(rng, ...)    -> bucket sample
 """
 
 from __future__ import annotations
@@ -87,8 +87,9 @@ class Trace:
     # ---- filters / samplers ---------------------------------------------
 
     def filter_all_runs_intact(self, expected: set[int] | None = None) -> "Trace":
-        """Drop sites that don't have every expected run (decision #40).
-        Applied before magnitude-band sampling so advertised `n` is honest.
+        """Drop sites that don't have every expected run. Applied before
+        magnitude-band sampling so advertised `n` is honest (the trace has
+        ~9% (site×run) gaps, unevenly distributed across sites).
         """
         if expected is None:
             expected = set(self.runs)
@@ -109,7 +110,9 @@ class Trace:
         mid_n: int = 200,
         tail_n: int = 200,
     ) -> dict[str, list[tuple[int, str]]]:
-        """CrUX magnitude-band victim sampling (sim-spec §8.1).
+        """CrUX magnitude-band victim sampling. CrUX exposes ranks at
+        log-magnitude resolution only ({1k, 5k, 10k}), so stratification
+        is by band rather than fine Zipf rank.
         Returns {bucket_name: [(rank, site), ...]}.
         """
         by_bucket: dict[str, list[tuple[int, str]]] = {
@@ -182,7 +185,7 @@ def load_real(path: str | Path) -> Trace:
 
 
 # =====================================================================
-# Synthetic generator (sim-spec §3.3)
+# Synthetic generator
 # =====================================================================
 
 def generate_synthetic(

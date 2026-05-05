@@ -1,9 +1,10 @@
-"""Hand-checked fixture (sim-spec §12 criterion 2 + decision #42).
+"""Hand-checked fixture.
 
 5 pages, 3 trials. Every expected `S'` is computed by hand below — if the
-simulator's output drifts, the asserts fail. Decision #42: at least one
-trial must put a `dns_ms=0` host inside the victim page; that host must
-appear in S' (it is a first-class observable).
+simulator's output drifts, the asserts fail. At least one trial must put
+a `dns_ms=0` host inside the victim page; that host must appear in S'
+(failed-DNS rows are first-class observables — the query reaches the
+resolver in production, so the proxy/adversary sees it).
 
 Reference set (Q_w):
   P1: {a, b, c}     (overlaps P2 on {b,c})
@@ -85,7 +86,7 @@ def _drive(victim_entries, *, B: int, T_max_ms: float, cache: LRUCache):
 
 
 # =====================================================================
-# Trial 1 — failed-DNS host visible in S' (decision #42)
+# Trial 1 — failed-DNS host visible in S'
 # =====================================================================
 
 def test_trial1_failed_dns_observable():

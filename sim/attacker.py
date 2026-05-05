@@ -1,10 +1,9 @@
-"""Strong-attacker scoring (sim-spec §7.2, §7.3).
+"""Strong-attacker scoring.
 
 Reference set is `{site: Q_w (set of hostnames)}`. Attacker observation is
-either a single batch's `S'` or the cross-batch union for lens (b)
-(sim-spec §8.2). Score is set-based: |Q_w ∩ S'| / |Q_w|. Candidates are
-sites with score ≥ α. Ranking uses descending score, with stable ties
-broken by site name.
+either a single batch's `S'` or the cross-batch union for lens (b).
+Score is set-based: |Q_w ∩ S'| / |Q_w|. Candidates are sites with score
+≥ α. Ranking uses descending score, with stable ties broken by site name.
 """
 
 from __future__ import annotations

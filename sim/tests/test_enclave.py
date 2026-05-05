@@ -1,12 +1,12 @@
-"""Unit tests for cache + enclave + attacker (slice 2).
+"""Unit tests for cache + enclave + attacker.
 
 Covers:
   - LRU eviction and pre-cache suppression
   - size and time triggers, underflow path
-  - failed-DNS sentinel is observable in S' (decision #41)
+  - failed-DNS sentinel is observable in S'
   - strong-attacker bg-real subtraction
   - candidate-set / ranking
-  - lens (b) cross-batch union (sim-spec §8.2)
+  - lens (b) cross-batch union
 """
 
 from __future__ import annotations
@@ -137,7 +137,8 @@ def test_strong_attacker_subtracts_bg():
 def test_overlap_host_bg_first_then_victim():
     """If bg queries a host first and victim queries the same host later,
     the host is still victim_real and must NOT be subtracted from S'
-    (sim-spec §7.1: `S' ⊇ victim_real`). Catches the first-seen-owner bug.
+    (strong-attacker invariant `S' ⊇ victim_real`). Catches the
+    first-seen-owner bug.
     """
     c = LRUCache(100)
     bb = BatchBuffer(c, B=2, T_max=1000.0)
@@ -171,8 +172,9 @@ def test_overlap_host_victim_first_then_bg():
 
 
 def test_failed_dns_observable_in_S_prime():
-    """Decision #41: dns_ms=0 entries feed the batcher exactly like resolved
-    rows. The enclave doesn't see dns_ms — it only sees the hostname; this
+    """Failed-DNS rows (dns_ms=0) feed the batcher exactly like resolved
+    rows: the query reaches the resolver in production, so the proxy sees
+    it. The enclave doesn't see dns_ms — it only sees the hostname; this
     test stands in for the integration check that failed-DNS hostnames are
     observable to the attacker.
     """
@@ -188,8 +190,9 @@ def test_failed_dns_observable_in_S_prime():
 
 
 def test_covers_remain_in_S_prime():
-    """Covers stay sealed in the target→enclave bundle (decision #10).
-    They must appear in S' (attacker can't subtract them)."""
+    """Covers stay sealed in the target→enclave bundle. They must appear
+    in S' — the attacker has no visibility into per-query cover sets, so
+    can't subtract them."""
     c = LRUCache(100)
 
     def sample(victim_real, bg_real):
@@ -297,7 +300,8 @@ def test_unique_top1_still_hits():
 
 
 def test_lens_b_cross_batch_union():
-    """Sim-spec §8.2: union over all batches the victim touched."""
+    """Lens (b): attacker unions S' across every batch the victim's
+    queries touched."""
     c = LRUCache(100)
     bb = BatchBuffer(c, B=2, T_max=10000.0)
     Q = {"victim": {"v1", "v2", "v3", "v4"},
