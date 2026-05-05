@@ -21,11 +21,12 @@ DNS page-load benchmarks for the CoDoH PETS'26 paper, plus the leakage simulator
     - `entries_har_<strategy>.csv` — per-entry DNS trace `(rank, site, run, day, hostname, started_offset_ms, dns_ms)`, one row per resolved lookup in HAR emission order; consumed by the leakage simulator.
 
 ## Pipeline
-The leakage analysis runs in three stages:
+The leakage analysis runs in four stages:
 
 1. **Crawl** — `RUNS=3 ./run-vanilla-parallel.sh` (needs venv) → `runs/vanilla-parallel-<ts>/combined_entries_har_vanilla.csv`.
 2. **Validate** — `python3 validate-trace.py` (stdlib). The script's input path is currently hardcoded to `runs/crux-combined-r1-r3/`; edit it to point at a fresh batch.
-3. **Simulate** — `python3 -m sim.tests.test_<module>` (stdlib) for sanity passes; the parameter-sweep CLI is not yet implemented.
+3. **Sweep** — `python3 -m sim.cli run --cells smoke|default|full` (stdlib) drives the parameter grid in parallel, writing per-trial JSONL under `out/raw/cell_<hash>/`. See "Parameter sweeps" below.
+4. **Aggregate + plot** — `python3 -m sim.analyze_b`, `sim.analyze_a`, `sim.plot_heatmap` produce the per-cell CSVs and the `(B, T_max)` heatmap under `out/agg/`.
 
 ## Leakage simulator
 
@@ -75,10 +76,43 @@ done
 - `trace_loader` — loads the per-entry CSV (or generates synthetic) and exposes `Trace.pages`, `Trace.Q_w`, `filter_all_runs_intact`, magnitude-band sampler.
 - `cache` — LRU with pre-cache suppression on insert.
 - `enclave` — `BatchBuffer` (size + time triggers, B_min underflow) producing `Commit(B_eff, S_prime, victim_in_batch, …)`.
-- `cover` — `Matched` / `Uniform` / `Stale` cover distributions over a `CoverUniverse`.
+- `cover` — `Matched` / `Uniform` / `Stale` cover distributions over a `CoverUniverse`. Default universe = CrUX top-1M (`data/crux-202603.csv`).
 - `background` — pre-generates `BgEvent`s (bursts + idle Poisson) for the trial window.
 - `attacker` — `score`, `candidate_set`, `rank`, `evaluate` (strict tie semantics).
 - `trial` — `run_trial(params, victim_key, trace, cover_universe, seed) → TrialLog` per-batch + cross-batch results.
+- `cells` — parameter-grid expansion (`smoke` / `default` / `full` presets) and stable blake2b cell hashing.
+- `cli` — sweep driver. `python3 -m sim.cli run --cells <preset>` parallelizes (cell × victim-chunk) work units across all CPUs and writes JSONL to `out/raw/cell_<hash>/trials_*.jsonl.gz`.
+- `analyze_a`, `analyze_b` — per-cell aggregations. Lens-(a) is per-batch identification accuracy stratified by victim popularity bucket; lens-(b) is the cross-batch-union page-identification headline.
+- `plot_heatmap` — `(B, T_max)` heatmap from the lens-b CSV; prints an `OK / FAIL` gradient gate (`max-min top1_acc > 0.1` is the smoke acceptance check).
+
+### Parameter sweeps
+```sh
+# Smoke gradient sanity (3×3 corners of B × T_max):
+python3 -m sim.cli run --cells smoke --workers 56 --out-dir out/smoke
+
+# Default-axis sweep (5×5 B × T_max at default other-axes):
+python3 -m sim.cli run --cells default --workers 56 --out-dir out/default
+
+# Aggregate + plot:
+python3 -m sim.analyze_b --out-dir out/smoke
+python3 -m sim.analyze_a --out-dir out/smoke
+python3 -m sim.plot_heatmap --out-dir out/smoke --metric top5_acc
+```
+
+Sweep tunables:
+- `--cells {smoke,default,full}` — preset.
+- `--set B=5,10 T_max_s=30,300` — override individual axes without authoring a new preset.
+- `--ntrials N` — trials per (cell, victim, run). Smoke default 10, default-axis 30.
+- `--top1k`, `--mid`, `--tail` — victim sample size per CrUX magnitude band.
+- `--workers N` — pool size (default = `cpu_count()`). Work units are chunks of (cell × victim shard), so `workers > n_cells` keeps cores busy.
+- `--seed N` — base seed for victim sampling and per-trial RNG. Per-trial seeds are derived deterministically (blake2b over cell hash + victim + trial idx) so figure regeneration is exact across re-runs.
+- `--dry-run` — print the planned cells and exit.
+
+Outputs:
+- `out/<run>/raw/manifest.json` — sweep plan (cells, sampling, seeds).
+- `out/<run>/raw/cell_<hash>/trials_*.jsonl.gz` — one JSONL row per trial: cell hash, victim, bucket, lens-a per-batch + lens-b cross-batch `AttackResult`s.
+- `out/<run>/agg/lens_a.csv`, `lens_b.csv` — per-cell (and per-bucket for lens a) means, p10/p90 candidate-set sizes, `frac_cand_le_{k,5,10}`, top-1/top-5 accuracy, MRR.
+- `out/<run>/agg/heatmap_top5_acc.png` — headline `(B, T_max)` heatmap.
 
 ## Latency benchmarks (DoH / ODoH)
 - `SITES=data/name.csv RUNS=2 ./run-doh.sh` (needs venv). Outputs: `runs/doh-<ts>/results_har_doh.csv`.
