@@ -25,7 +25,7 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright
@@ -70,12 +70,28 @@ def parse_args():
         "--output",
         help="Output CSV path (default: results_har_<strategy>.csv)",
     )
+    parser.add_argument(
+        "--entries-output",
+        help="Per-entry trace CSV path (default: entries_har_<strategy>.csv). "
+             "Schema: rank,site,run,day,hostname,started_offset_ms,dns_ms.",
+    )
+    parser.add_argument(
+        "--run-offset", type=int, default=0,
+        help="Integer added to every emitted `run` value (default: 0). Lets a "
+             "top-up batch avoid colliding with `(site, run, day)` keys from "
+             "an earlier batch — e.g., first batch RUNS=2 writes run=1,2; "
+             "second batch RUNS=2 --run-offset=2 writes run=3,4.",
+    )
     return parser.parse_args()
 
 
 args = parse_args()
 OUTPUT_FILE = args.output or f"results_har_{args.strategy}.csv"
+ENTRIES_FILE = args.entries_output or f"entries_har_{args.strategy}.csv"
 LOG_FILE = args.log or f"benchmark-har-{args.strategy}.log"
+RUN_OFFSET = args.run_offset
+
+RUN_DAY = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 # Set up file logger
 logging.basicConfig(
@@ -122,11 +138,16 @@ def parse_har(har_file, nav_host):
       - total_dns_sum: sum of all positive DNS lookup times (ms)
       - wall_clock_dns: wall-clock DNS time after merging parallel intervals (ms)
       - domain_dns: dict mapping hostname -> dns_ms (first lookup only)
+      - entries: list of (hostname, started_offset_ms, dns_ms) in HAR emission
+        order. Includes both resolved DNS lookups and failed-DNS attempts.
+        Sentinel: dns_ms == 0 means the DNS query was emitted but never
+        completed (NXDOMAIN / SERVFAIL / timeout).
     """
     domain_dns = {}
     total_dns_sum = 0.0
     main_dns = 0.0
     dns_intervals = []  # list of (start_ms, end_ms) for wall-clock calculation
+    entries_trace = []  # list of (host, started_offset_ms, dns_ms)
 
     with open(har_file, "r", encoding="utf-8") as f:
         har_data = json.load(f)
@@ -165,12 +186,29 @@ def parse_har(har_file, nav_host):
                     # print(f"    Entry {i}: {host} dns={dns_ms:.1f}ms "
                     #       f"interval=({dns_start:.1f}ms, {dns_end:.1f}ms), start={entry_start}")
                     dns_intervals.append((dns_start, dns_end))
+                    if host:
+                        entries_trace.append((host, dns_start, dns_ms))
 
                 # Track first DNS lookup per domain
                 if host and host not in domain_dns:
                     domain_dns[host] = dns_ms
 
                 log.info("  HAR entry %d: %s dns=%.1fms", i, host, dns_ms)
+            else:
+                # No DNS timing recorded. Two cases:
+                #   - response.status > 0 with dns=-1: connection/DNS reuse;
+                #     no fresh query went out → skip.
+                #   - response.status == -1 with dns=-1: request failed before
+                #     a response. Most commonly this is a failed DNS lookup
+                #     (NXDOMAIN/SERVFAIL/timeout). The query still hit the
+                #     resolver, so a CODoH enclave would observe it. Include
+                #     it in the trace with `dns_ms = 0` as a sentinel.
+                status = (entry.get("response") or {}).get("status", 0)
+                if status == -1 and host and t0:
+                    entry_start = datetime.fromisoformat(entry["startedDateTime"])
+                    offset_ms = (entry_start - t0) / timedelta(milliseconds=1)
+                    entries_trace.append((host, offset_ms, 0.0))
+                    log.info("  HAR entry %d: %s dns=FAIL (logged with dns_ms=0)", i, host)
 
             # Main document DNS: match on navigation host
             if host == nav_host and dns_ms > 0 and main_dns == 0.0:
@@ -188,6 +226,7 @@ def parse_har(har_file, nav_host):
         "total_dns_sum": total_dns_sum,
         "wall_clock_dns": wall_clock_dns,
         "domain_dns": domain_dns,
+        "entries": entries_trace,
     }
 
 
@@ -208,9 +247,6 @@ def benchmark_site(p, site, rank, run, strategy):
     safe_site = site.replace("/", "_")
     har_file = f"/tmp/har_{safe_site}_{run}_{os.getpid()}.har"
     user_data_dir = f"/tmp/chrome_bench_{os.getpid()}_{run}_{safe_site}"
-
-    # Delay between browser instances to avoid resource exhaustion
-    time.sleep(1)
 
     # Use a thread-based watchdog instead of signal.SIGALRM.
     # Playwright's sync API uses greenlets, so SIGALRM exceptions don't
@@ -247,7 +283,7 @@ def benchmark_site(p, site, rank, run, strategy):
 
         print(f"  Navigating to {url}...", flush=True)
         page.goto(url, wait_until="load", timeout=30000)
-        page.wait_for_timeout(2000)  # let lazy JS fire subresource fetches
+        page.wait_for_timeout(500)  # let lazy JS fire subresource fetches
 
         page_load = page.evaluate("""() => {
             const [nav] = performance.getEntriesByType('navigation');
@@ -267,7 +303,7 @@ def benchmark_site(p, site, rank, run, strategy):
         if os.path.exists(har_file):
             os.remove(har_file)
         shutil.rmtree(user_data_dir, ignore_errors=True)
-        return None
+        return None, []
 
     timer.cancel()
     shutil.rmtree(user_data_dir, ignore_errors=True)
@@ -278,6 +314,7 @@ def benchmark_site(p, site, rank, run, strategy):
     total_dns = har_metrics["total_dns_sum"]
     wall_clock_dns = har_metrics["wall_clock_dns"]
     domain_dns = har_metrics["domain_dns"]
+    entries = har_metrics["entries"]
 
     # Log per-domain breakdown
     # for host, dns_ms in sorted(domain_dns.items()):
@@ -287,10 +324,12 @@ def benchmark_site(p, site, rank, run, strategy):
     if os.path.exists(har_file):
         os.remove(har_file)
 
+    out_run = run + RUN_OFFSET
+
     row = {
         "rank": rank,
         "site": site,
-        "run": run,
+        "run": out_run,
         "strategy": strategy,
         "main_dns_ms": main_dns,
         "total_dns_sum_ms": total_dns,
@@ -300,16 +339,30 @@ def benchmark_site(p, site, rank, run, strategy):
         "domains_resolved": ";".join(sorted(domain_dns.keys())),
     }
 
-    log.info("  Run %d: main_dns=%.1fms total_dns=%.1fms wall_clock_dns=%.1fms load=%.1fms domains=%d",
-             run, main_dns, total_dns, wall_clock_dns, page_load, len(domain_dns))
+    entry_rows = [
+        {
+            "rank": rank,
+            "site": site,
+            "run": out_run,
+            "day": RUN_DAY,
+            "hostname": host,
+            "started_offset_ms": f"{offset_ms:.3f}",
+            "dns_ms": f"{dns_ms:.3f}",
+        }
+        for host, offset_ms, dns_ms in entries
+    ]
+
+    log.info("  Run %d: main_dns=%.1fms total_dns=%.1fms wall_clock_dns=%.1fms load=%.1fms domains=%d entries=%d",
+             run, main_dns, total_dns, wall_clock_dns, page_load, len(domain_dns), len(entry_rows))
     print(f"  Run {run}: main_dns={main_dns:.1f}ms "
           f"total_dns={total_dns:.1f}ms "
           f"wall_clock_dns={wall_clock_dns:.1f}ms "
           f"load={page_load:.1f}ms "
-          f"domains_resolved={len(domain_dns)}",
+          f"domains_resolved={len(domain_dns)} "
+          f"entries={len(entry_rows)}",
           flush=True)
 
-    return row
+    return row, entry_rows
 
 
 def run_benchmark():
@@ -329,18 +382,31 @@ def run_benchmark():
         "main_dns_ms", "total_dns_sum_ms", "wall_clock_dns_ms",
         "page_load_ms", "unique_domains_resolved", "domains_resolved",
     ]
+    entry_fieldnames = [
+        "rank", "site", "run", "day",
+        "hostname", "started_offset_ms", "dns_ms",
+    ]
 
     row_count = 0
-    with open(OUTPUT_FILE, "w", newline="") as f:
+    entry_count = 0
+    with open(OUTPUT_FILE, "w", newline="") as f, \
+         open(ENTRIES_FILE, "w", newline="") as ef:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         f.flush()
+        entry_writer = csv.DictWriter(ef, fieldnames=entry_fieldnames)
+        entry_writer.writeheader()
+        ef.flush()
 
-        def _write(row):
-            nonlocal row_count
+        def _write(row, entry_rows):
+            nonlocal row_count, entry_count
             writer.writerow(row)
             f.flush()
             row_count += 1
+            if entry_rows:
+                entry_writer.writerows(entry_rows)
+                ef.flush()
+                entry_count += len(entry_rows)
 
         with sync_playwright() as p:
             if randomize:
@@ -356,9 +422,9 @@ def run_benchmark():
 
                     for idx, (rank, site) in enumerate(ordered_sites, 1):
                         print(f"\n[{idx}/{len(ordered_sites)}] Benchmarking https://{site}", flush=True)
-                        row = benchmark_site(p, site, rank, cycle, strategy)
+                        row, entry_rows = benchmark_site(p, site, rank, cycle, strategy)
                         if row:
-                            _write(row)
+                            _write(row, entry_rows)
             else:
                 # Default: all runs for a site consecutively, then next site.
                 for idx, (rank, site) in enumerate(sites, 1):
@@ -366,12 +432,14 @@ def run_benchmark():
                     print(f"\n[{idx}/{len(sites)}] Benchmarking https://{site}", flush=True)
 
                     for run in range(1, runs + 1):
-                        row = benchmark_site(p, site, rank, run, strategy)
+                        row, entry_rows = benchmark_site(p, site, rank, run, strategy)
                         if row:
-                            _write(row)
+                            _write(row, entry_rows)
 
-    log.info("Results written to %s (%d rows)", OUTPUT_FILE, row_count)
+    log.info("Results written to %s (%d rows), entries to %s (%d rows)",
+             OUTPUT_FILE, row_count, ENTRIES_FILE, entry_count)
     print(f"\nResults written to {OUTPUT_FILE}")
+    print(f"Per-entry trace written to {ENTRIES_FILE} ({entry_count} rows)")
 
 
 if __name__ == "__main__":

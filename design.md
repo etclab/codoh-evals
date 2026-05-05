@@ -12,13 +12,13 @@
 - Use a local DNS proxy to swap between DNS strategies without changing anything else
 
 ## Sites
-- Cisco Umbrella top-10k, filtered to resolvable domains (see top-10k-resolvable.csv)
+- Cisco Umbrella top-10k, filtered to resolvable domains (see umbrella-top-10k-resolvable.csv)
 - 10 repetitions per site per strategy
 
 ## Chunks
 
 ### Chunk 1: Playwright baseline with vanilla DNS
-- Use Playwright (headless Chromium) to load each site in top-10k-resolvable.csv
+- Use Playwright (headless Chromium) to load each site in umbrella-top-10k-resolvable.csv
 - Run: `python benchmark-har.py vanilla`
 - Capture via HAR:
   - `timings.dns` per entry: DNS time per request (first lookup per host = per-domain DNS)
@@ -26,7 +26,9 @@
   - Wall-clock DNS: merged overlapping intervals across all entries
   - Page load: `performance.getEntriesByType('navigation')` loadEventEnd - startTime
 - Fresh persistent context (unique user_data_dir) per run to clear in-browser DNS/HTTP cache
-- Output: CSV of (rank, site, run, strategy, main_dns_ms, total_dns_sum_ms, wall_clock_dns_ms, page_load_ms, unique_domains_resolved, domains_resolved)
+- Outputs:
+  - `results_har_<strategy>.csv`: aggregated per (site, run) — `(rank, site, run, strategy, main_dns_ms, total_dns_sum_ms, wall_clock_dns_ms, page_load_ms, unique_domains_resolved, domains_resolved)`
+  - `entries_har_<strategy>.csv`: per-entry DNS trace — `(rank, site, run, day, hostname, started_offset_ms, dns_ms)`, one row per resolved DNS lookup in HAR emission order. Consumed by the leakage simulator.
 
 ### Chunk 2: Playwright with DoH via dnscrypt-proxy
 - Run dnscrypt-proxy with `dnscrypt-proxy-doh.toml` (DoH upstream, no TRR)
