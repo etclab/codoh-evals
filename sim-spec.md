@@ -424,45 +424,67 @@ Master heatmap: two panels (cold + warm) on the same `(B, T_max)` grid.
 
 ### 10.1 Raw per-trial JSONL log
 
-One line per trial. Path: `out/raw/cell_<cell_hash>/trials.jsonl.gz`.
+One line per trial. Path: `out/raw/cell_<cell_hash>/trials_<chunk_id:04d>.jsonl.gz`
+(chunked across victim shards — see decision #49). Implemented schema (per
+decision #48 — scored `AttackResult` dicts in place of raw `batches[].S_prime`):
 
 ```json
 {
-  "trial_id": "cell_a1b2_v00042_t017",
-  "params": {"B": 10, "T_max": 60, "k": 3, "lambda_bg": 100,
-             "N": 1024, "alpha": 0.5, "D": "matched", "init": "cold"},
-  "victim": {"site": "example.com", "rank": 437, "bucket": "101-1k",
-             "Q_v": ["a.example.com", "cdn.example.com", ...]},
-  "batches": [
-    {
-      "batch_id": 0,
-      "B_eff": 10,
-      "S_prime": ["a.example.com", "cover1.foo", ...],
-      "victim_in_batch": ["a.example.com", "cdn.example.com"],
-      "victim_covers": ["cover1.foo", "cover2.bar", "cover3.baz"]
-    },
-    ...
+  "cell_hash": "0874200bf679",
+  "victim_site": "example.com",
+  "victim_rank": 437,
+  "bucket": "1k-5k",
+  "trial_idx": 17,
+  "n_commits": 707,
+  "n_victim_batches": 1,
+  "underflow_count": 1,
+  "S_prime_total_size": 64,
+  "Q_v_size": 4,
+  "lens_a": [
+    {"cand_size": 15, "top1": false, "top5": false, "rr": 0.34,
+     "victim_score": 1.0, "g": 0, "t": 8}
   ],
-  "underflows": 0,
-  "victim_batch_count": 2,
-  "wall_time_ms": 45
+  "lens_b": {"cand_size": 15, "top1": false, "top5": false, "rr": 0.34,
+             "victim_score": 1.0, "g": 0, "t": 8}
 }
 ```
 
+Cell parameters live in `out/raw/manifest.json` (one entry per cell) — not
+duplicated per-trial. To recover trial-level params, join on `cell_hash`.
+
+Trade-off vs. the original schema: per-batch `S'` sets are not stored, so
+re-scoring under a different α or reference set requires re-simulating. A
+future `--store-batches` flag would emit raw S' alongside (per decision #48).
+
 ### 10.2 Pre-aggregated metrics CSV
 
-Path: `out/agg/cell_<cell_hash>.csv`. One row per (cell, metric):
+Two CSVs per sweep, in `out/<run>/agg/`:
+
+- `lens_b.csv` — one row per cell. Cross-batch-union page-ID headline.
+- `lens_a.csv` — one row per (cell, bucket). Per-batch identification
+  accuracy stratified by CrUX magnitude band.
+
+Implemented columns:
 
 ```
-cell_id, B, T_max, k, lambda_bg, N, alpha, D, init,
-candidate_size_median, candidate_size_p10, candidate_size_p90,
-frac_size_1, frac_size_le_5, frac_size_le_10,
-top1_acc, top5_acc, mrr,
-underflow_rate, mean_S_prime_size, mean_victim_batches
+cell_hash, B, T_max_s, k, lambda_bg, N, alpha, D, init,
+n_trials,                                 # lens_b only; lens_a uses n_batches
+mean_cand_size, p10_cand_size, p90_cand_size,
+frac_cand_le_k, frac_cand_le_5, frac_cand_le_10,
+top1_acc, top5_acc, mean_mrr,
+mean_victim_score                         # lens_b only
 ```
 
-Lens-(a) per-bucket and lens-(c) days-to-fingerprint live in separate
-sibling files: `out/agg/lens_a_<cell_hash>.csv`, `out/agg/lens_c.csv`.
+`frac_cand_le_k` is keyed off the cell's own `k` (operator-tuned threshold);
+`frac_cand_le_{5,10}` are fixed thresholds for cross-cell comparability.
+
+**TODO** before camera-ready: extend the analyzers to also surface
+`underflow_rate`, `mean_S_prime_size`, and `mean_victim_batches` from the
+JSONL (those fields are stored per-trial but not yet aggregated). `frac_size_1`
+(exact set-of-one identification) likewise pending.
+
+Lens-(c) days-to-fingerprint will live in `out/agg/lens_c.csv` (separate
+file, schema TBD when lens-(c) replay lands).
 
 ### 10.3 Plotting
 
@@ -649,8 +671,10 @@ sim/
 ```
 
 Dependencies: numpy, polars (faster CSV than pandas), scipy, matplotlib.
-Single global RNG seed (CLI flag `--seed`). Parallelism via
-`multiprocessing.Pool` over cells, sequential trials within a cell.
+Per-trial RNG seeds derived deterministically from the CLI `--seed` via
+blake2b (decision #51). Parallelism via `multiprocessing.Pool` over
+(cell × victim_shard) work units (decision #50), sequential trials within
+a shard.
 
 ---
 
@@ -711,6 +735,10 @@ encodes: the question, the chosen option, and a one-line rationale.
 | 45 | Owner tracking on overlap | per-host owner *set* (union); overlap host counts as `victim_real` | first-seen-owner under-reported leakage when bg queried a host before victim; `S' ⊇ victim_real` (§7.1) demands overlap survive subtraction (2026-05-05) |
 | 46 | Time-trigger on sparse traffic | trial loop fires `tick(first_t + T_max)` when gap exceeds T_max | event-boundary tick'ing alone left `t_commit` drifting to the next event under low λ_bg, corrupting the T_max axis (2026-05-05) |
 | 47 | Cover universe | CrUX top-1M (`data/crux-202603.csv`); per-origin weight = ln(high/low)/(high-low) over each band | replaces placeholder Umbrella reference; CrUX exposes only band-rank, so within-band sampling is uniform and inter-band ratios follow integrated 1/r Zipf — same source as reference set §3.2 (2026-05-05) |
+| 48 | Per-trial JSONL schema | store scored `AttackResult` dicts (`lens_a`, `lens_b`) per row, not raw `batches[].S_prime` | ~50–100× smaller logs at default-axis scale (median \|S'\| = 152). Trade-off: cannot re-score under alternative α / reference set without re-simulating. Future `--store-batches` flag if reviewers ask (2026-05-05) |
+| 49 | JSONL chunk layout | `cell_<hash>/trials_<chunk_id:04d>.jsonl.gz` (multiple files) instead of single `trials.jsonl.gz` | enables per-cell internal parallelism — a 9-cell smoke saturates a 56-core box only if work unit splits across shards. Analyzers glob `trials*.jsonl.gz` (2026-05-05) |
+| 50 | Parallelism unit | work unit = (cell × victim_shard); default `workers = cpu_count()` (no cap) | spec §13's "Pool over cells" + §15's `min(cpu_count, 16)` cap leaves 47 cores idle on the lab box when `n_cells < 16` (2026-05-05) |
+| 51 | Per-trial seeding | `seed = blake2b(cell_hash \| victim_site \| victim_run \| trial_idx)[:4]` | decision #23's "single global seed" relied on Python `hash()` of tuples, which is randomized per process unless `PYTHONHASHSEED` is set — silent reproducibility hazard. blake2b gives byte-identical re-runs (verified 2026-05-05 via smoke2 vs smoke3 diff) (2026-05-05) |
 
 ---
 
@@ -726,7 +754,7 @@ These are not blocking; defaults locked in spec, configurable via CLI:
   initial transient).
 - **`dt` per simulator tick:** 10ms.
 - **JSONL gzip compression level:** 6.
-- **Parallelism cap:** `min(cpu_count, 16)`; configurable.
+- **Parallelism default:** `cpu_count()` (no cap); configurable via `--workers` (per decision #50).
 - **Per-trial time budget:** 30s wall-clock; trials exceeding this raise
   and are logged as failures (not silently skipped).
 

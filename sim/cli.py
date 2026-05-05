@@ -62,16 +62,18 @@ _COVER: CoverUniverse | None = None
 _REF: dict[str, set[str]] | None = None
 _NTRIALS: int = 0
 _BASE_SEED: int = 0
+_PROGRESS_EVERY: int = 0
 
 
 def _worker_init(trace_path: str, cover_path: str, reference_path: str | None,
-                 ntrials: int, base_seed: int) -> None:
-    global _TRACE, _COVER, _REF, _NTRIALS, _BASE_SEED
+                 ntrials: int, base_seed: int, progress_every: int) -> None:
+    global _TRACE, _COVER, _REF, _NTRIALS, _BASE_SEED, _PROGRESS_EVERY
     _TRACE = load_real(trace_path).filter_all_runs_intact()
     _COVER = CoverUniverse.from_file(cover_path)
     _REF = {s: hs for s, hs in _TRACE.Q_w.items()}
     _NTRIALS = ntrials
     _BASE_SEED = base_seed
+    _PROGRESS_EVERY = progress_every
 
 
 def _run_chunk(args: tuple[Cell, str, int, list[tuple[str, int, str]]]) -> dict:
@@ -88,6 +90,12 @@ def _run_chunk(args: tuple[Cell, str, int, list[tuple[str, int, str]]]) -> dict:
     cell_dir.mkdir(parents=True, exist_ok=True)
     out_path = cell_dir / f"trials_{chunk_id:04d}.jsonl.gz"
 
+    # Estimate total trials in this chunk for progress reporting.
+    n_total_est = 0
+    for _bucket, _rank, site in victims_chunk:
+        runs = {k[2] for k in _TRACE.pages if k[1] == site}
+        n_total_est += len(runs) * _NTRIALS
+    short = cell.hash[:6]
     n_written = 0
     t0 = time.time()
     day = next(iter(_TRACE.days))
@@ -109,6 +117,15 @@ def _run_chunk(args: tuple[Cell, str, int, list[tuple[str, int, str]]]) -> dict:
                     row = _summarize(log, bucket, ti, _REF)
                     fh.write(json.dumps(row) + "\n")
                     n_written += 1
+                    if (_PROGRESS_EVERY and
+                            n_written % _PROGRESS_EVERY == 0):
+                        elapsed = time.time() - t0
+                        rate = n_written / max(elapsed, 1e-6)
+                        eta = (n_total_est - n_written) / max(rate, 1e-6)
+                        print(f"[hb] cell={short} chunk={chunk_id:04d} "
+                              f"trial={n_written}/{n_total_est} "
+                              f"elapsed={elapsed:.0f}s eta={eta:.0f}s",
+                              flush=True)
     return {
         "cell_hash": cell.hash,
         "chunk_id": chunk_id,
@@ -228,6 +245,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="base seed for victim sampling + trial seeding")
     pr.add_argument("--workers", type=int, default=None,
                     help="pool size (default: min(cpu_count(), 16))")
+    pr.add_argument("--progress", type=int, default=25,
+                    help="emit a [hb] heartbeat line every N trials per chunk "
+                         "(0 disables; default 25)")
     pr.add_argument("--dry-run", action="store_true",
                     help="print plan, don't run")
 
@@ -282,7 +302,7 @@ def main(argv: list[str] | None = None) -> int:
 
     workers = args.workers or mp.cpu_count()
     init_args = (args.trace, args.cover, args.reference,
-                 ntrials, args.seed)
+                 ntrials, args.seed, args.progress)
 
     # Build the work list using whatever sampling the worker would compute,
     # so the planner sees the same victims. Easiest: sample here too.
@@ -315,10 +335,13 @@ def main(argv: list[str] | None = None) -> int:
         with ctx.Pool(workers, initializer=_worker_init,
                       initargs=init_args) as pool:
             results = []
+            total = len(work)
             for r in pool.imap_unordered(_run_chunk, work):
                 results.append(r)
-                print(f"  done cell={r['cell_hash']} chunk={r['chunk_id']} "
-                      f"trials={r['n_trials']} t={r['elapsed_s']}s")
+                print(f"  [{len(results):4d}/{total}] done "
+                      f"cell={r['cell_hash']} chunk={r['chunk_id']:04d} "
+                      f"trials={r['n_trials']} t={r['elapsed_s']}s",
+                      flush=True)
     print(f"[done] {len(results)} chunks in {round(time.time() - t0, 1)}s")
     (out_dir / "raw" / "results.json").write_text(
         json.dumps(results, indent=2)
