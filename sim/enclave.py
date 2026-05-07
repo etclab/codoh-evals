@@ -56,6 +56,10 @@ class Commit:
     bg_covers: list[str]
     underflow: bool
     pre_cached_suppressed: list[str] = field(default_factory=list)
+    # Victim queries discarded by an underflow commit. Not observable by the
+    # attacker (no S' contribution per §6.1) — purely a simulator-internal
+    # metric for the lens-(c) `odoh_fallback_count` column.
+    dropped_victim_real: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -141,12 +145,14 @@ class BatchBuffer:
         unique_real = list(self._unique.keys())
         owners_of = {h: set(s) for h, s in self._unique.items()}
         if time_triggered and self.unique_count < self.B_min:
+            dropped_victim = [h for h in unique_real if "victim" in owners_of[h]]
             self._reset()
             return Commit(
                 batch_id=batch_id, t_commit=t_commit,
                 B_eff=0, S_prime=[], victim_in_batch=[],
                 victim_covers=[], bg_covers=[],
                 underflow=True,
+                dropped_victim_real=dropped_victim,
             )
 
         # Overlap hosts (queried by both) count as victim_real and are NOT
