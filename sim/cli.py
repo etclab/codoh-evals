@@ -344,10 +344,18 @@ def _write_csv(path: Path, rows: list[dict]) -> None:
 
 
 def _build_work_items_lens_c(cells: list[Cell], n_users: int, workers: int,
-                             out_dir: str) -> list[tuple]:
-    """One chunk per (cell, user-shard). Aim ~workers chunks per cell when
-    cells < workers, else one chunk per cell."""
-    chunks_per_cell = max(1, workers // max(1, len(cells)))
+                             out_dir: str, oversubscribe: int = 4) -> list[tuple]:
+    """One chunk per (cell, user-shard).
+
+    Heuristic mirrors `_build_work_items`: aim for `oversubscribe × workers`
+    total chunks so the slowest cell's users split across multiple workers
+    and wall time approaches `total_work / workers` rather than
+    `max_chunk_time`. Worker init (trace + cover load) is amortized at pool
+    startup, so finer chunking is essentially free.
+    """
+    target_chunks = max(workers, oversubscribe * workers)
+    chunks_per_cell = max(1, target_chunks // max(1, len(cells)))
+    chunks_per_cell = min(chunks_per_cell, n_users)  # no empty chunks
     chunk_size = max(1, (n_users + chunks_per_cell - 1) // chunks_per_cell)
     work = []
     chunk_id = 0
@@ -361,15 +369,25 @@ def _build_work_items_lens_c(cells: list[Cell], n_users: int, workers: int,
 
 def _build_work_items(
     cells: list[Cell], victims: dict[str, list[tuple[int, str]]],
-    workers: int, out_dir: str,
+    workers: int, out_dir: str, oversubscribe: int = 4,
 ) -> list[tuple]:
-    """Flatten (cell, victim) into chunks. Aim for ~workers items per cell
-    when cells < workers; one item per cell otherwise."""
+    """Flatten (cell × victim_shard) into chunks.
+
+    Heuristic: aim for `oversubscribe × workers` total chunks across all
+    cells, so the slowest cell's work is split across multiple workers and
+    wall time approaches `total_work / workers` rather than
+    `max_chunk_time`. Init cost (trace + cover load, ~30s) is paid once
+    per worker at pool startup, not per chunk, so finer chunking is
+    basically free.
+    """
     flat: list[tuple[str, int, str]] = []
     for bucket, lst in victims.items():
         for rank, site in lst:
             flat.append((bucket, rank, site))
-    chunks_per_cell = max(1, workers // max(1, len(cells)))
+    target_chunks = max(workers, oversubscribe * workers)
+    chunks_per_cell = max(1, target_chunks // max(1, len(cells)))
+    # Cap shards-per-cell at the number of victims (no empty chunks).
+    chunks_per_cell = min(chunks_per_cell, len(flat))
     chunk_size = max(1, (len(flat) + chunks_per_cell - 1) // chunks_per_cell)
     work = []
     chunk_id = 0
@@ -511,6 +529,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.tail is not None:
         sampling["tail_n"] = args.tail
     ntrials = args.ntrials if args.ntrials is not None else sampling["ntrials"]
+    sampling["ntrials"] = ntrials  # keep manifest + plan log in sync with CLI
 
     out_dir = Path(args.out_dir)
     (out_dir / "raw").mkdir(parents=True, exist_ok=True)
