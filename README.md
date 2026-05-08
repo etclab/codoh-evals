@@ -25,8 +25,8 @@ The leakage analysis runs in four stages:
 
 1. **Crawl** — `RUNS=3 ./run-vanilla-parallel.sh` (needs venv) → `runs/vanilla-parallel-<ts>/combined_entries_har_vanilla.csv`.
 2. **Validate** — `python3 validate-trace.py` (stdlib). The script's input path is currently hardcoded to `runs/crux-combined-r1-r3/`; edit it to point at a fresh batch.
-3. **Sweep** — `python3 -m sim.cli run --cells smoke|default|full` (stdlib) drives the parameter grid in parallel, writing per-trial JSONL under `out/raw/cell_<hash>/`. See "Parameter sweeps" below.
-4. **Aggregate + plot** — `python3 -m sim.analyze_b`, `sim.analyze_a`, `sim.plot_heatmap` produce the per-cell CSVs and the `(B, T_max)` heatmap under `out/agg/`.
+3. **Sweep** — `python3 -m sim.cli run --cells smoke|default|full [--lens b|c]` (stdlib) drives the parameter grid in parallel, writing per-trial JSONL under `out/raw/cell_<hash>/`. `--lens b` (default) runs the per-victim lens-(a)/(b) trials; `--lens c` runs the long-term intersection attack against synthetic multi-day users. See "Parameter sweeps" below.
+4. **Aggregate + plot** — `python3 -m sim.analyze_b`, `sim.analyze_a`, `sim.plot_heatmap` for lens-(a)/(b); lens-(c) aggregates inline at the end of `--lens c` and exposes `sim.plot_lens_c`, `sim.plot_lens_c_heatmap`, `sim.analyze_c_alpha_sens` for figures and α-sensitivity.
 
 ## Leakage simulator
 
@@ -68,7 +68,7 @@ differ — the simulator treats those as separate days (lens c semantics).
 ### Sanity-check the simulator
 Stdlib-only; no installs required. From the repo root:
 ```sh
-for t in trace_loader enclave trial hand_checked closed_form; do
+for t in trace_loader enclave trial hand_checked closed_form lens_c; do
     python3 -m sim.tests.test_$t
 done
 ```
@@ -83,7 +83,11 @@ done
 - `cells` — parameter-grid expansion (`smoke` / `default` / `full` presets) and stable blake2b cell hashing.
 - `cli` — sweep driver. `python3 -m sim.cli run --cells <preset>` parallelizes (cell × victim-chunk) work units across all CPUs and writes JSONL to `out/raw/cell_<hash>/trials_*.jsonl.gz`.
 - `analyze_a`, `analyze_b` — per-cell aggregations. Lens-(a) is per-batch identification accuracy stratified by victim popularity bucket; lens-(b) is the cross-batch-union page-identification headline.
+- `lens_c` — synthetic multi-day user driver for the long-term intersection attack. Picks a fixed 10-page repertoire from the top-1k bucket per user, replays it across `max_days` synthetic days with per-day reshuffled order + jittered timing + fresh background and cover RNG, and emits per-day `S'` sets via `BatchBuffer`.
+- `analyze_c` — lens-(c) aggregation: per-day candidate set, multi-day intersection, days-to-fingerprint (right-censored at `max_days`), repertoire accuracy, and Bayesian-posterior-on-repertoire robustness check. `analyze_c_alpha_sens` re-aggregates raw JSONL under multiple α thresholds without re-simulating.
 - `plot_heatmap` — `(B, T_max)` heatmap from the lens-b CSV; prints an `OK / FAIL` gradient gate (`max-min top1_acc > 0.1` is the smoke acceptance check).
+- `plot_lens_c` — three-panel `|C_7|` (day-7 intersection size) vs `B`, `k`, `λ_bg` with p10/p90 bands.
+- `plot_lens_c_heatmap` — `(B, T_max)` master heatmap of `|C_7|` median + p90 with operator-tier overlay (Strict / Moderate / Permissive).
 
 ### Parameter sweeps
 ```sh
@@ -97,6 +101,16 @@ python3 -m sim.cli run --cells default --workers 56 --out-dir out/default
 python3 -m sim.analyze_b --out-dir out/smoke
 python3 -m sim.analyze_a --out-dir out/smoke
 python3 -m sim.plot_heatmap --out-dir out/smoke --metric top5_acc
+
+# Lens-(c) long-term intersection attack (synthetic multi-day users):
+python3 -m sim.cli run --lens c \
+    --set B=5,10,20 T_max_s=30,300,1800 \
+    --n-users 30 --max-days 7 \
+    --workers 56 --out-dir out/lens_c
+# Aggregation runs inline; figures:
+python3 -m sim.plot_lens_c           --users-csv out/lens_c/agg/lens_c_users.csv
+python3 -m sim.plot_lens_c_heatmap   --users-csv out/lens_c/agg/lens_c_users.csv
+python3 -m sim.analyze_c_alpha_sens  # re-aggregates under α ∈ {0.3, 0.5, 0.7}
 ```
 
 Sweep tunables:
@@ -107,12 +121,13 @@ Sweep tunables:
 - `--workers N` — pool size (default = `cpu_count()`). Work units are chunks of (cell × victim shard), so `workers > n_cells` keeps cores busy.
 - `--seed N` — base seed for victim sampling and per-trial RNG. Per-trial seeds are derived deterministically (blake2b over cell hash + victim + trial idx) so figure regeneration is exact across re-runs.
 - `--dry-run` — print the planned cells and exit.
+- **Lens-(c) only** (`--lens c`): `--n-users N` (default 30), `--max-days D` (default 7), `--repertoire-size R` (default 10), `--repertoire-bucket-max-rank` (default 1000 = CrUX top-1k), `--posterior-threshold` (default 0.9, for the Bayesian-fingerprint robustness column).
 
 Outputs:
 - `out/<run>/raw/manifest.json` — sweep plan (cells, sampling, seeds).
-- `out/<run>/raw/cell_<hash>/trials_*.jsonl.gz` — one JSONL row per trial: cell hash, victim, bucket, lens-a per-batch + lens-b cross-batch `AttackResult`s.
-- `out/<run>/agg/lens_a.csv`, `lens_b.csv` — per-cell (and per-bucket for lens a) means, p10/p90 candidate-set sizes, `frac_cand_le_{k,5,10}`, top-1/top-5 accuracy, MRR.
-- `out/<run>/agg/heatmap_top5_acc.png` — headline `(B, T_max)` heatmap.
+- Lens-(a)/(b): `out/<run>/raw/cell_<hash>/trials_*.jsonl.gz` (per-trial JSONL) and `out/<run>/agg/lens_a.csv`, `lens_b.csv` (per-cell/per-bucket means, p10/p90 candidate sizes, `frac_cand_le_{k,5,10}`, top-1/top-5, MRR).
+- Lens-(c): `out/<run>/raw/cell_<hash>/lens_c_*.jsonl.gz` (per-user, per-day raw `S'`), `out/<run>/agg/lens_c.csv` (per-cell rollup: days-to-fp quantiles, `n_censored`, `posterior_fraction_users`, `repertoire_acc_median_final`, `p_obs_fitted`), `out/<run>/agg/lens_c_users.csv` (one row per user with `intersect_final`, `rep_acc_final`, `posterior_R_final`), and `out/<run>/agg/lens_c_alpha_sens.csv` if `analyze_c_alpha_sens` is run.
+- `out/<run>/agg/heatmap_top5_acc.png` — lens-(b) `(B, T_max)` heatmap. `lens_c_heatmap_BTmax.{pdf,png}` and `lens_c_intersect_final.{pdf,png}` are emitted by the lens-(c) plot scripts.
 
 ## Latency benchmarks (DoH / ODoH)
 - `SITES=data/name.csv RUNS=2 ./run-doh.sh` (needs venv). Outputs: `runs/doh-<ts>/results_har_doh.csv`.
