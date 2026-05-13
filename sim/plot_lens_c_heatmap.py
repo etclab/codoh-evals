@@ -66,16 +66,22 @@ def main(argv=None):
     fig, axes = plt.subplots(1, 2, figsize=(10, 4.2), sharey=True)
     norm = mcolors.LogNorm(vmin=10, vmax=max(np.nanmax(med), np.nanmax(p90)))
 
+    # pcolormesh on integer cell-corner coords gives clean PDF polygons
+    # (imshow renders an interpolated raster that streaks under PDF viewers).
+    x_edges = np.arange(len(Ts) + 1) - 0.5
+    y_edges = np.arange(len(Bs) + 1) - 0.5
     for ax, mat, title in [(axes[0], med, f'median |C_7|'),
                            (axes[1], p90, f'p90 |C_7|')]:
-        im = ax.imshow(mat, origin='lower', aspect='auto', cmap='viridis_r',
-                       norm=norm)
+        im = ax.pcolormesh(x_edges, y_edges, mat, cmap='viridis_r',
+                           norm=norm, shading='flat',
+                           edgecolors='none', linewidth=0)
         ax.set_xticks(range(len(Ts)))
         ax.set_xticklabels([f'{int(t)}' for t in Ts])
         ax.set_yticks(range(len(Bs)))
         ax.set_yticklabels([str(b) for b in Bs])
         ax.set_xlabel('T_max (s)')
         ax.set_title(title)
+        ax.set_aspect('auto')
         for i in range(len(Bs)):
             for j in range(len(Ts)):
                 v = mat[i, j]
