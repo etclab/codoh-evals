@@ -1,9 +1,9 @@
 """Lens-(c) master figure: (B, T_max) heatmap of |C_7| median.
 
-Committed deliverable per `revision-commitment.txt §1`. Two panels: median
-and p90 of the day-7 candidate-set intersection size, with cells colored on
-log-scale and annotated with the median value. Operator-tier overlay
-shaded as nested green regions when thresholds are configured.
+Two panels: median and p90 of the day-7 candidate-set intersection size,
+with cells colored on log-scale and annotated with the median value.
+Operator-tier overlay shaded as nested green regions when thresholds are
+configured.
 """
 
 from __future__ import annotations

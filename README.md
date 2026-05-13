@@ -25,8 +25,8 @@ The leakage analysis runs in four stages:
 
 1. **Crawl** — `RUNS=3 ./run-vanilla-parallel.sh` (needs venv) → `runs/vanilla-parallel-<ts>/combined_entries_har_vanilla.csv`.
 2. **Validate** — `python3 validate-trace.py` (stdlib). The script's input path is currently hardcoded to `runs/crux-combined-r1-r3/`; edit it to point at a fresh batch.
-3. **Sweep** — `python3 -m sim.cli run --cells smoke|default|full [--lens b|c]` (stdlib) drives the parameter grid in parallel, writing per-trial JSONL under `out/raw/cell_<hash>/`. `--lens b` (default) runs the per-victim lens-(a)/(b) trials; `--lens c` runs the long-term intersection attack against synthetic multi-day users. See "Parameter sweeps" below.
-4. **Aggregate + plot** — `python3 -m sim.analyze_b`, `sim.analyze_a`, `sim.plot_heatmap` for lens-(a)/(b); lens-(c) aggregates inline at the end of `--lens c` and exposes `sim.plot_lens_c`, `sim.plot_lens_c_heatmap`, `sim.analyze_c_alpha_sens` for figures and α-sensitivity.
+3. **Sweep** — `python3 -m sim.cli run --cells smoke|default|full [--lens b|c]` (stdlib) drives the parameter grid in parallel, writing per-trial JSONL under `out/raw/cell_<hash>/`. `--lens b` (default) runs the per-victim lens-(a)/(b) trials; `--lens c` runs the long-term intersection attack against synthetic multi-day users. Lens-(d) is a re-use of the lens-(b)/(c) drivers with `D ∈ {matched, uniform, stale}` to probe cover-distribution drift. See "Parameter sweeps" below.
+4. **Aggregate + plot** — `python3 -m sim.analyze_b`, `sim.analyze_a`, `sim.plot_heatmap` for lens-(a)/(b); lens-(c) aggregates inline at the end of `--lens c` and exposes `sim.plot_lens_c`, `sim.plot_lens_c_heatmap`, `sim.analyze_c_alpha_sens` for figures and α-sensitivity; lens-(d) reuses the lens-b/lens-c aggregates and is plotted by `sim.plot_dsens` (single-tier) and `sim.plot_dsens_tiers` (cross-tier).
 
 ## Leakage simulator
 
@@ -88,6 +88,7 @@ done
 - `plot_heatmap` — `(B, T_max)` heatmap from the lens-b CSV; prints an `OK / FAIL` gradient gate (`max-min top1_acc > 0.1` is the smoke acceptance check).
 - `plot_lens_c` — three-panel `|C_7|` (day-7 intersection size) vs `B`, `k`, `λ_bg` with p10/p90 bands.
 - `plot_lens_c_heatmap` — `(B, T_max)` master heatmap of `|C_7|` median + p90 with operator-tier overlay (Strict / Moderate / Permissive).
+- `plot_dsens` / `plot_dsens_tiers` — lens-(d) cover-distribution drift figures. `plot_dsens` is a single-tier 3-panel (lens-a top-1k top-5, lens-b page-load top-5, lens-c |C_7|) vs `D ∈ {matched, uniform, stale}`; `plot_dsens_tiers` collates three pre-aggregated tiers (`results/dsens_B{20,50,100}/`) into the cross-tier figure used in `app:dsens`.
 
 ### Parameter sweeps
 ```sh
@@ -111,6 +112,25 @@ python3 -m sim.cli run --lens c \
 python3 -m sim.plot_lens_c           --users-csv out/lens_c/agg/lens_c_users.csv
 python3 -m sim.plot_lens_c_heatmap   --users-csv out/lens_c/agg/lens_c_users.csv
 python3 -m sim.analyze_c_alpha_sens  # re-aggregates under α ∈ {0.3, 0.5, 0.7}
+
+# Lens-(d) cover-distribution drift (one tier at a time; reuses lens-b + lens-c drivers):
+#   Pin all axes except D, then run lens-b and lens-c with D ∈ {matched, uniform, stale}.
+python3 -m sim.cli run \
+    --set B=20 T_max_s=300 k=3 lambda_bg=100 alpha=0.5 D=matched,uniform,stale \
+    --workers 56 --out-dir out/dsens_b20_lensb
+python3 -m sim.cli run --lens c \
+    --set B=20 T_max_s=300 k=3 lambda_bg=100 alpha=0.5 D=matched,uniform,stale \
+    --n-users 30 --max-days 7 \
+    --workers 56 --out-dir out/dsens_b20_lensc
+# Single-tier figure (Moderate-ish):
+python3 -m sim.plot_dsens \
+    --lensb out/dsens_b20_lensb/agg \
+    --lensc out/dsens_b20_lensc/agg \
+    --out figs/dsens_b20.pdf
+# Cross-tier figure — repeat the two runs above with B=50 and B=100, copy
+# agg outputs into results/dsens_B{20,50,100}/ (lens_a.csv, lens_b.csv,
+# lens_c.csv, lens_c_users.csv), then:
+python3 -m sim.plot_dsens_tiers --out figs/dsens_tiers.pdf
 ```
 
 Sweep tunables:
@@ -122,12 +142,14 @@ Sweep tunables:
 - `--seed N` — base seed for victim sampling and per-trial RNG. Per-trial seeds are derived deterministically (blake2b over cell hash + victim + trial idx) so figure regeneration is exact across re-runs.
 - `--dry-run` — print the planned cells and exit.
 - **Lens-(c) only** (`--lens c`): `--n-users N` (default 30), `--max-days D` (default 7), `--repertoire-size R` (default 10), `--repertoire-bucket-max-rank` (default 1000 = CrUX top-1k), `--posterior-threshold` (default 0.9, for the Bayesian-fingerprint robustness column).
+- **Lens-(d)** is not a separate `--lens` flag; it is a parameterisation of lens-b/lens-c with `--set D=matched,uniform,stale`. `D` controls how the cover universe is drawn relative to the empirical query distribution `Q`: `matched` = Zipf-band-weighted on CrUX top-1M (closest proxy to `Q`); `uniform` = uniform over the same 1M support; `stale` = uniform over a frozen 50% subset of CrUX (wrong shape + smaller support).
 
 Outputs:
 - `out/<run>/raw/manifest.json` — sweep plan (cells, sampling, seeds).
 - Lens-(a)/(b): `out/<run>/raw/cell_<hash>/trials_*.jsonl.gz` (per-trial JSONL) and `out/<run>/agg/lens_a.csv`, `lens_b.csv` (per-cell/per-bucket means, p10/p90 candidate sizes, `frac_cand_le_{k,5,10}`, top-1/top-5, MRR).
 - Lens-(c): `out/<run>/raw/cell_<hash>/lens_c_*.jsonl.gz` (per-user, per-day raw `S'`), `out/<run>/agg/lens_c.csv` (per-cell rollup: days-to-fp quantiles, `n_censored`, `posterior_fraction_users`, `repertoire_acc_median_final`, `p_obs_fitted`), `out/<run>/agg/lens_c_users.csv` (one row per user with `intersect_final`, `rep_acc_final`, `posterior_R_final`), and `out/<run>/agg/lens_c_alpha_sens.csv` if `analyze_c_alpha_sens` is run.
 - `out/<run>/agg/heatmap_top5_acc.png` — lens-(b) `(B, T_max)` heatmap. `lens_c_heatmap_BTmax.{pdf,png}` and `lens_c_intersect_final.{pdf,png}` are emitted by the lens-(c) plot scripts.
+- Lens-(d): no new artefacts beyond the lens-b/lens-c CSVs (each row carries its `D` value); per-tier sweeps are kept under `results/dsens_B{20,50,100}/` (one folder per `B`, containing `lens_a.csv`, `lens_b.csv`, `lens_c.csv`, `lens_c_users.csv`, and both `manifest_lens{b,c}.json`). Final figures: `figs/dsens.pdf` (single-tier) and `figs/dsens_tiers.pdf` (cross-tier, used in `app:dsens`).
 
 ## Latency benchmarks (DoH / ODoH)
 - `SITES=data/name.csv RUNS=2 ./run-doh.sh` (needs venv). Outputs: `runs/doh-<ts>/results_har_doh.csv`.
