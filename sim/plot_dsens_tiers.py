@@ -16,6 +16,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import numpy as np
 from matplotlib.ticker import NullFormatter, ScalarFormatter
 
 D_ORDER = ["matched", "uniform", "stale"]
@@ -32,9 +33,7 @@ def _read_csv(path: Path) -> list[dict]:
 def _percentile(xs: list[int], p: float) -> float:
     if not xs:
         return float("nan")
-    xs = sorted(xs)
-    k = max(0, min(len(xs) - 1, int(p * (len(xs) - 1))))
-    return xs[k]
+    return float(np.percentile(xs, 100 * p))
 
 
 def _gather(results_dir: Path) -> dict:
@@ -87,8 +86,8 @@ def main(argv: list[str] | None = None) -> int:
         ax.plot(B_VALUES, ys, marker=D_MARKERS[D], color=D_COLORS[D],
                 label=D, linewidth=2, markersize=9)
     ax.set_xlabel("B (commit threshold)")
-    ax.set_ylabel("Lens-(a) top-5 acc, top-1k victims")
-    ax.set_title("(a) Per-batch identification")
+    ax.set_ylabel("Top-5 accuracy, top-1k victims")
+    ax.set_title("(a) Single batch")
     ax.set_xscale("log")
     _plain_log_x(ax)
     ax.legend(frameon=False, fontsize=10)
@@ -101,8 +100,8 @@ def main(argv: list[str] | None = None) -> int:
         ax.plot(B_VALUES, ys, marker=D_MARKERS[D], color=D_COLORS[D],
                 label=D, linewidth=2, markersize=9)
     ax.set_xlabel("B (commit threshold)")
-    ax.set_ylabel("Lens-(b) top-5 acc")
-    ax.set_title("(b) Page-load union")
+    ax.set_ylabel("Top-5 accuracy")
+    ax.set_title("(b) Within a page load")
     ax.set_xscale("log")
     _plain_log_x(ax)
     ax.legend(frameon=False, fontsize=10)
@@ -121,8 +120,8 @@ def main(argv: list[str] | None = None) -> int:
                 label=D, linewidth=2, markersize=9)
         ax.fill_between(B_VALUES, lo, hi, color=D_COLORS[D], alpha=0.15)
     ax.set_xlabel("B (commit threshold)")
-    ax.set_ylabel("Lens-(c) |C_7| (median, p10–p90 band)")
-    ax.set_title("(c) Day-7 intersection")
+    ax.set_ylabel("|C_7| (median, p10–p90 band)")
+    ax.set_title("(c) Returning user, day-7 intersection")
     ax.set_xscale("log")
     _plain_log_x(ax)
     ax.set_yscale("log")

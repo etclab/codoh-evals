@@ -82,29 +82,29 @@ def main(argv=None):
                   fixed=('*', 300.0, 3, 100),
                   xlabel='B (batch size)', log_x=True)
     axes[0].set_ylabel(r'$|C_7|$ (day-7 intersection size)')
-    axes[0].set_title('B-cliff @ k=3, λ_bg=100, T_max=300')
+    axes[0].set_title('k=3, λ_bg=100, T_max=300')
 
     # Panel B: k-axis at default (B=20, T=300, λ_bg=100)
     pts_b = panel(axes[1], by_cell, 'k',
                   fixed=(20, 300.0, '*', 100),
                   xlabel='k (covers per query)')
-    axes[1].set_title('k @ B=20, λ_bg=100, T_max=300')
+    axes[1].set_title('B=20, λ_bg=100, T_max=300')
 
     # Panel C: λ_bg-axis at default (B=20, T=300, k=3)
     pts_c = panel(axes[2], by_cell, 'bg',
                   fixed=(20, 300.0, 3, '*'),
                   xlabel='λ_bg (concurrent users)', log_x=True)
-    axes[2].set_title('λ_bg @ B=20, k=3, T_max=300')
+    axes[2].set_title('B=20, k=3, T_max=300')
 
     # Annotate horizontal reference: |R| = 10 (the strict ≤R fingerprint
     # threshold) — every cell's median sits well above it; that's the
     # "all cells censor at days_to_fp=7" finding visualized.
     for ax in axes:
         ax.axhline(10, color='red', linestyle='--', linewidth=1, alpha=0.6,
-                   label='|R| = 10 (fp threshold)')
+                   label='|R| = 10 (fingerprint threshold)')
         ax.legend(loc='upper left', fontsize=8)
 
-    fig.suptitle('Day-7 candidate-set intersection size — lens (c)',
+    fig.suptitle('Day-7 candidate-set intersection size — cross-day attack',
                  fontsize=12, y=1.02)
     fig.tight_layout()
     fig.savefig(args.out, bbox_inches='tight')
