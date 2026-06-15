@@ -15,6 +15,10 @@ import csv
 from collections import defaultdict
 from pathlib import Path
 
+import matplotlib
+# Embed TrueType fonts (42) instead of the default Type 3.
+matplotlib.rcParams["pdf.fonttype"] = 42
+matplotlib.rcParams["ps.fonttype"] = 42
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.ticker import NullFormatter, ScalarFormatter
